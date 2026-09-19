@@ -45,10 +45,11 @@ func loadSSHConfig(path string) (*ssh_config.Config, error) {
 }
 
 // ResolveSSH expands an ssh_config alias into concrete connection
-// parameters. A missing config file falls back to defaults; an empty
-// cfgPath skips alias resolution entirely (tests).
-func ResolveSSH(user, host, cfgPath, knownHostsPath string) (SSHConfig, error) {
-	port := 22
+// parameters. An explicit port (URI form) overrides the config's Port; a
+// missing config file falls back to defaults; an empty cfgPath skips alias
+// resolution entirely (tests).
+func ResolveSSH(user, host string, port int, cfgPath, knownHostsPath string) (SSHConfig, error) {
+	cfgPort := 22
 	ident := ""
 
 	if cfgPath != "" {
@@ -62,7 +63,7 @@ func ResolveSSH(user, host, cfgPath, knownHostsPath string) (SSHConfig, error) {
 			}
 			if v, _ := cfg.Get(host, "port"); v != "" {
 				if p, err := strconv.Atoi(v); err == nil {
-					port = p
+					cfgPort = p
 				}
 			}
 			if v, _ := cfg.Get(host, "identityfile"); v != "" {
@@ -75,6 +76,9 @@ func ResolveSSH(user, host, cfgPath, knownHostsPath string) (SSHConfig, error) {
 				host = v
 			}
 		}
+	}
+	if port <= 0 {
+		port = cfgPort
 	}
 
 	if knownHostsPath == "" {
@@ -104,14 +108,23 @@ func expandTilde(p string) string {
 // Dial opens an SFTP filesystem for an SSH target, resolving the user's
 // ~/.ssh/config, keys and known_hosts.
 func Dial(t Target) (*SftpFs, error) {
+	return DialWith(t, "", "")
+}
+
+// DialWith is Dial with injectable ssh_config and known_hosts paths
+// (tests).
+func DialWith(t Target, cfgPath, knownHostsPath string) (*SftpFs, error) {
 	if t.Kind != "ssh" {
 		return nil, fmt.Errorf("dial: not an ssh target")
 	}
-	cfgPath, err := homePath(".ssh", "config")
-	if err != nil {
-		return nil, err
+	if cfgPath == "" {
+		p, err := homePath(".ssh", "config")
+		if err != nil {
+			return nil, err
+		}
+		cfgPath = p
 	}
-	cfg, err := ResolveSSH(t.User, t.Host, cfgPath, "")
+	cfg, err := ResolveSSH(t.User, t.Host, t.Port, cfgPath, knownHostsPath)
 	if err != nil {
 		return nil, err
 	}

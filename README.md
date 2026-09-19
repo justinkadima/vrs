@@ -139,8 +139,10 @@ imported 1 file(s) from deploy:/var/www/site — snapshot #7
 previous state captured as #6 — `vrs goto @6` to recover
 ```
 
-- Targets are `[user@]host:/path` (SSH/SFTP: `~/.ssh/config` aliases, agent
-  and key auth, `known_hosts` enforced) or plain local directories.
+- Targets are `[user@]host:/path` or `ssh://user@host:2222/path` (URI form
+  is the only way to inline a port; otherwise `~/.ssh/config` Port applies;
+  aliases, agent and key auth, `known_hosts` enforced) or plain local
+  directories.
 - Exports are **incremental** via a manifest at the target and always ship
   *recorded* state — never uncommitted work. `--prune` mirrors exactly
   (extras trashed, never deleted).

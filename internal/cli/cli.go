@@ -8,7 +8,7 @@ import (
 )
 
 // Version is the vrs build version.
-const Version = "0.3.0"
+const Version = "0.3.1"
 
 const usage = `vrs — snapshots for your code
 
@@ -23,7 +23,8 @@ Usage:
   vrs capture [-t tag]          hidden checkpoint snapshot (agents/scripts)
   vrs export <target> [@ref] [--prune]
                                 materialize a snapshot onto a target
-                                (user@host:/path or a local directory)
+                                (user@host:/path, ssh://user@host:port/path,
+                                or a local directory)
   vrs import <target> [--prune]  overlay a target onto the working tree
                                 and snapshot it (auto-initializes)
   vrs mcp                       MCP server for AI agents (stdio JSON-RPC)

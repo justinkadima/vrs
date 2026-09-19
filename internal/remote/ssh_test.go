@@ -205,7 +205,7 @@ func TestResolveSSHAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := ResolveSSH("", "deploy", cfgPath, "/tmp/kh")
+	got, err := ResolveSSH("", "deploy", 0, cfgPath, "/tmp/kh")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,12 +213,58 @@ func TestResolveSSHAlias(t *testing.T) {
 		t.Fatalf("alias resolution: %+v", got)
 	}
 
+	// An explicit port (URI form) overrides the config's Port.
+	got, err = ResolveSSH("", "deploy", 9000, cfgPath, "/tmp/kh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Addr != "127.0.0.1:9000" {
+		t.Fatalf("port override: %+v", got)
+	}
+
 	// Explicit user wins over the config; missing config falls back.
-	got, err = ResolveSSH("root", "nosuchalias", "", "/tmp/kh")
+	got, err = ResolveSSH("root", "nosuchalias", 0, "", "/tmp/kh")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.User != "root" || got.Addr != "nosuchalias:22" || got.IdentityFile != "" {
 		t.Fatalf("defaults: %+v", got)
+	}
+}
+
+// The full production path for a URI target: ParseTarget → ssh_config
+// resolution → URI port override → known_hosts → SFTP → export.
+func TestURITargetExport(t *testing.T) {
+	addr, knownHosts, keyPath := startSSHServer(t)
+	host, port, _ := strings.Cut(addr, ":")
+
+	// A config with a *wrong* Port for this host: the URI port must win.
+	cfgPath := filepath.Join(t.TempDir(), "config")
+	cfgText := "Host " + host + "\n    Port 22\n    IdentityFile " + keyPath + "\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tgt, err := ParseTarget("ssh://test@" + host + ":" + port + "/srv/out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs, err := DialWith(tgt, cfgPath, knownHosts)
+	if err != nil {
+		t.Fatalf("dial via URI target: %v", err)
+	}
+	defer fs.Close()
+
+	files := map[string]string{"index.html": "<html/>"}
+	src := fakeSource{}
+	for _, c := range files {
+		src[hashOf(c)] = []byte(c)
+	}
+	res, err := ExportTree(entriesOf(files), src, fs, filepath.ToSlash(t.TempDir()), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Written) != 1 {
+		t.Fatalf("uri export: %+v", res)
 	}
 }
