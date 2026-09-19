@@ -32,7 +32,7 @@ the current directory's subtree; a path argument narrows further.
 ### Out (deliberately, post-v1)
 
 Daemon/ambient auto-snapshots · machine sync · experiments/branches · `find` (generalized
-bisect) · publish-to-git · VS Code extension · agent checkpointing · GC/retention.
+bisect) · publish-to-git · VS Code extension · GC/retention.
 (The schema is designed so none of these require breaking changes.)
 
 ### `@ref` syntax (v1)
@@ -257,6 +257,11 @@ path), skip; else write temp + rename, chmod. Safe to re-run after interruption.
 ---
 
 ## 9. Post-v1 roadmap (order of attack)
+
+**Shipped post-v1: agent checkpointing (v0.2.0).** `vrs capture` (hidden,
+idempotent checkpoints) + `vrs mcp` (MCP stdio server: snapshot/restore/
+diff/log for AI agents). Landed with zero schema changes — kind='capture'
+and the @ref machinery carried the whole feature.
 
 1. **Daemon + ambient snapshots** — the killer feature; `save`/`undo`/`diff` semantics unchanged (they target latest *named* snapshot; `@refs` reach auto-saves).
 2. **`vrs find --run "cmd"`** — generalized bisect over the fine-grained timeline.

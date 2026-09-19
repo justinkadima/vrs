@@ -209,6 +209,19 @@ func (s *Store) SnapshotExists(id int64) (bool, error) {
 	return n > 0, nil
 }
 
+// LatestAny returns the newest snapshot of any kind (save or capture).
+func (s *Store) LatestAny() (int64, bool, error) {
+	var id int64
+	err := s.db.QueryRow("SELECT id FROM snapshots ORDER BY id DESC LIMIT 1").Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
+}
+
 // NthNewestSave returns the id of the n-th newest save (n=0 is the newest).
 // Captures are skipped: relative refs count the visible timeline.
 func (s *Store) NthNewestSave(n int64) (int64, error) {

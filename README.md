@@ -4,9 +4,10 @@ Snapshots for your code. A version control system for solo developers:
 numbered snapshots of your folder, diffs against the last snapshot, and
 undo/redo — no staging area, no branches, no remotes, no ceremony.
 
-**Status: v0.1.0.** `save`, `log`, `diff`, `undo`, `redo`, `goto`, and `@refs`
-all work; the design is documented in [PLAN.md](PLAN.md), and the post-v1
-roadmap (GC/retention, `find`, publish-to-git) is sketched there too.
+**Status: v0.2.0.** All core commands work (`save`, `diff`, `undo`, `redo`,
+`goto`, `capture`, `log`, `mcp`); the design is documented in
+[PLAN.md](PLAN.md), and the post-v1 roadmap (GC/retention, `find`,
+publish-to-git) is sketched there too.
 
 ## Install
 
@@ -100,6 +101,25 @@ Measured with the e2e harness (`go test ./e2e/ -run TestPerf10k -v`) on a
 | Clean `diff` | 82 ms | < 300 ms |
 | Save, 100 files changed | 141 ms | < 2 s |
 | First-ever save (hash + chunk + compress everything) | 1.2 s | — |
+
+## Agent checkpointing
+
+AI coding agents can checkpoint and rewind your repository through the same
+append-only history — no WIP commits, no vendor lock-in:
+
+- **From any agent or script:** `vrs capture -t "before npm install"` writes a
+  hidden, deduplicated checkpoint and prints its id; restore with
+  `vrs goto @N`. Idempotent: capturing an unchanged tree stores nothing.
+- **MCP server:** `vrs mcp` speaks Model Context Protocol over stdio — the
+  agent client spawns it per session, so there is no daemon to install.
+  Register it once:
+
+  ```sh
+  claude mcp add vrs -- vrs mcp
+  ```
+
+  and the agent gets four tools: `snapshot`, `restore`, `diff`, `log` —
+  every restore captures first, so even a runaway agent can't lose work.
 
 ## Design
 
