@@ -4,8 +4,9 @@ Snapshots for your code. A version control system for solo developers:
 numbered snapshots of your folder, diffs against the last snapshot, and
 undo/redo — no staging area, no branches, no remotes, no ceremony.
 
-**Status: M2 (pre-alpha).** `save`, `log`, `diff`, `undo`, `redo`, `goto`, and
-`@refs` work. Next: hardening + v0.1.0 — see [PLAN.md](PLAN.md) for the roadmap.
+**Status: v0.1.0.** `save`, `log`, `diff`, `undo`, `redo`, `goto`, and `@refs`
+all work; the design is documented in [PLAN.md](PLAN.md), and the post-v1
+roadmap (GC/retention, `find`, publish-to-git) is sketched there too.
 
 ## Install
 
@@ -85,7 +86,20 @@ $ vrs log --all                # include the hidden captures
 - The entire history lives in **one file**: `.vrs/vrs.db` (SQLite).
   Copy it and you've backed up everything.
 - Ignore rules: built-in defaults (`node_modules/`, `.git/`, `dist/`, …)
-  plus a `.vrsignore` in gitignore syntax.
+  plus a `.vrsignore` in gitignore syntax (root file; `**`, `!negations`,
+  anchored `/patterns` all work). Symlinks and empty dirs are untracked.
+
+## Performance
+
+Measured with the e2e harness (`go test ./e2e/ -run TestPerf10k -v`) on a
+10k-file, ~165 MiB source-shaped fixture (Apple M-series, warm cache):
+
+| Scenario | p50 | Target |
+|---|---|---|
+| Clean save (refused, no writes) | 82 ms | < 300 ms |
+| Clean `diff` | 82 ms | < 300 ms |
+| Save, 100 files changed | 141 ms | < 2 s |
+| First-ever save (hash + chunk + compress everything) | 1.2 s | — |
 
 ## Design
 
@@ -95,4 +109,4 @@ when they land).
 
 ## License
 
-MIT (to be finalized at v0.1.0).
+[MIT](LICENSE)

@@ -210,22 +210,22 @@ path), skip; else write temp + rename, chmod. Safe to re-run after interruption.
 
 ## 6. Milestones
 
-### M0 — Storage core + save + log  (~2–3 days)
+### M0 — Storage core + save + log  (~2–3 days) ✅
 - Store: open/migrate, pragmas, chunk put/get, refcounts, single-txn save.
 - Capture engine: walk, ignore, chunk, hash, manifest.
 - `vrs save`, `vrs log`.
 - **Done when:** save on a real project works; DB inspectable; second save stores ~0 new bytes for unchanged files.
 
-### M1 — The loop: diff, undo, redo  (~3–4 days)
+### M1 — The loop: diff, undo, redo  (~3–4 days) ✅
 - Status walk with `wc_cache` fast path; per-file unified diff.
 - Capture-before-mutate engine; trash; redo stack; invalidation rules.
 - **Done when:** the full narrative works: save → edit → diff → undo → redo → save (redo cleared).
 
-### M2 — @refs + goto  (~2 days)
+### M2 — @refs + goto  (~2 days) ✅
 - @ref parser (N, -N, durations), `goto`, `log --all`, parent tracking, past-save warning.
 - **Done when:** goto to older snapshot and back loses nothing; uncommitted work survives every path.
 
-### M3 — Hardening + release  (~3 days)
+### M3 — Hardening + release  (~3 days) ✅
 - `.vrsignore` handling complete; perf pass (targets: 10k-file repo — clean save <300ms, diff <300ms, 100-file change save <2s).
 - E2E test suite (scripted scenarios against the built binary), fuzz chunker wrapper.
 - goreleaser config (darwin arm64/amd64, linux amd64/arm64), README, `go install` works.
