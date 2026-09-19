@@ -80,6 +80,36 @@ func scopeLabel(scope string) string {
 	return scope
 }
 
+// initRepoHere auto-initializes a repository at dir (used by save and
+// import — the two commands that legitimately create a repo). The caller
+// prints the announcement.
+func initRepoHere(dir string) (*store.Store, string, error) {
+	poly, err := snap.RandomPolynomialHex()
+	if err != nil {
+		return nil, "", err
+	}
+	st, err := store.InitAt(dir, poly)
+	if err != nil {
+		return nil, "", err
+	}
+	return st, dir, nil
+}
+
+// baseOrRef resolves the snapshot a command operates on: the working
+// position, or an explicit @ref. Returns 0 when the repo has no snapshots.
+func (rc *repoCtx) baseOrRef(ref *refSpec) (int64, error) {
+	id, err := rc.st.Base()
+	if err != nil {
+		return 0, err
+	}
+	if ref != nil {
+		if id, err = resolveRef(rc.st, *ref); err != nil {
+			return 0, err
+		}
+	}
+	return id, nil
+}
+
 // trashDir returns a fresh timestamped trash directory for a mutating op.
 func (rc *repoCtx) trashDir() string {
 	return filepath.Join(rc.root, ".vrs", "trash", fmt.Sprintf("%d", time.Now().UnixNano()))

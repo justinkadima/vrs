@@ -267,4 +267,62 @@ and the @ref machinery carried the whole feature.
 2. **`vrs find --run "cmd"`** — generalized bisect over the fine-grained timeline.
 3. **Machine sync** — chunk/op-level replication, SQLite file never synced directly.
 4. **Experiments** (`try` / `keep` / `toss`) — the `parent` column already supports lines.
-5. **`vrs publish`** — squash/export the main line to a git remote.
+5. **Git interop** — squash/export the main line to a git remote (renamed from `publish`; the word now carries no vrs meaning).
+
+---
+
+## 10. Import / Export (v0.3.0 — M4)
+
+vrs moves recorded state between machines over SSH — the solo workflow:
+snapshot → export to the server → hot-fix on the server → import back → saved.
+**Never a sync engine**: both commands are single, directional, whole-state
+operations. No conflict detection, no ancestry, no bidirectional anything.
+If you want sync, use rsync — vrs is your undo button, not your sync engine.
+
+### Targets
+
+- `[user@]host:/abs/path` — SSH/SFTP. `~/.ssh/config` aliases (Hostname,
+  User, Port, IdentityFile) are honored; auth is agent + keys only
+  (passwords unsupported in v1); host keys are checked against
+  `~/.ssh/known_hosts` and never auto-accepted.
+- Local directory paths (`~` expanded, relative to cwd).
+
+### `vrs export <target> [@ref] [--prune]`
+
+Materialize a *recorded* state (the position, or explicit `@ref`) onto the
+target — never the untracked working tree.
+
+- Incremental via the target manifest (`.vrs-manifest.json` at the target
+  root): only files whose hash or mode differ are written; full upload on
+  first export. Manifest updated only after a fully successful run — an
+  interrupted export leaves the target at the old consistent state.
+- Target files absent from the snapshot are left alone; `--prune` moves them
+  to `.vrs-trash/<unix-nanos>/` at the target — never hard-deleted.
+- Refused if the snapshot itself contains the reserved names
+  (`.vrs-manifest.json`, `.vrs-trash/`), or if the target is inside the
+  repository (the manifest must not become tracked content).
+
+### `vrs import <target> [--prune]`
+
+Overlay the target directory onto the working tree, then snapshot it.
+
+- Download set = remote files passing the repo's ignore rules (local
+  `.vrsignore` + built-ins). `.vrs/` is never touched on either side;
+  reserved names are never imported.
+- Quick-check (rsync semantics): download only files whose size or mtime
+  differ from the local copy; remote mtimes are preserved so repeats are
+  incremental. Same size+mtime-but-different-content blind spot as rsync/git.
+- Nothing changed → no capture, no snapshot ("nothing to import").
+- Anything changed → capture-before-mutate (pre-import state is a hidden
+  snapshot), overlay, then an automatic save advancing the position
+  (`import from <target> — N files`). Auto-initializes on first use.
+- Local files absent on the remote survive by default; `--prune` moves them
+  to the repo's `.vrs/trash/`.
+- Import takes no `@ref`.
+
+### Out of scope (the fence)
+
+Hooks, restarts, release directories, symlink flips, multi-host
+orchestration, config templating, pull/conflict semantics, password auth,
+rsync's delta protocol (whole changed files are shipped; history dedup keeps
+the *repository* small, not the wire).

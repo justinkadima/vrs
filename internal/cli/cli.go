@@ -8,7 +8,7 @@ import (
 )
 
 // Version is the vrs build version.
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 const usage = `vrs — snapshots for your code
 
@@ -21,6 +21,11 @@ Usage:
   vrs goto [@ref]               jump the working copy to any snapshot
                                 (no argument = newest save)
   vrs capture [-t tag]          hidden checkpoint snapshot (agents/scripts)
+  vrs export <target> [@ref] [--prune]
+                                materialize a snapshot onto a target
+                                (user@host:/path or a local directory)
+  vrs import <target> [--prune]  overlay a target onto the working tree
+                                and snapshot it (auto-initializes)
   vrs mcp                       MCP server for AI agents (stdio JSON-RPC)
   vrs log [-n N] [--all]        show the timeline (captures only with --all)
   vrs version                   print version
@@ -51,6 +56,10 @@ func Run(args []string, out, errW io.Writer) error {
 		return runRedo(args[1:], out, errW)
 	case "goto":
 		return runGoto(args[1:], out, errW)
+	case "export":
+		return runExport(args[1:], out, errW)
+	case "import":
+		return runImport(args[1:], out, errW)
 	case "capture":
 		return runCapture(args[1:], out, errW)
 	case "mcp":

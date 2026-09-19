@@ -4,10 +4,10 @@ Snapshots for your code. A version control system for solo developers:
 numbered snapshots of your folder, diffs against the last snapshot, and
 undo/redo — no staging area, no branches, no remotes, no ceremony.
 
-**Status: v0.2.0.** All core commands work (`save`, `diff`, `undo`, `redo`,
-`goto`, `capture`, `log`, `mcp`); the design is documented in
-[PLAN.md](PLAN.md), and the post-v1 roadmap (GC/retention, `find`,
-publish-to-git) is sketched there too.
+**Status: v0.3.0.** Core commands (`save`, `diff`, `undo`, `redo`, `goto`,
+`capture`, `log`, `mcp`) plus **import/export** over SSH and local
+directories — snapshot, ship to your server, hot-fix there, import back.
+See [PLAN.md](PLAN.md) for the full design and roadmap.
 
 ## Install
 
@@ -120,6 +120,37 @@ append-only history — no WIP commits, no vendor lock-in:
 
   and the agent gets four tools: `snapshot`, `restore`, `diff`, `log` —
   every restore captures first, so even a runaway agent can't lose work.
+
+## Ship it: export / import
+
+The solo loop — snapshot → deploy → hot-fix on the server → import back —
+without becoming a deploy tool or a sync engine:
+
+```sh
+$ vrs export deploy:/var/www/site          # ship the recorded state (#N), not your mess
+exported #4 to deploy:/var/www/site — 12 file(s) written, 30 unchanged
+
+$ vrs export deploy:/var/www/site @2        # ship any snapshot — rollback by redeploying
+
+# …you hot-fix a file directly on the server at 2am…
+
+$ vrs import deploy:/var/www/site           # bring it back
+imported 1 file(s) from deploy:/var/www/site — snapshot #7
+previous state captured as #6 — `vrs goto @6` to recover
+```
+
+- Targets are `[user@]host:/path` (SSH/SFTP: `~/.ssh/config` aliases, agent
+  and key auth, `known_hosts` enforced) or plain local directories.
+- Exports are **incremental** via a manifest at the target and always ship
+  *recorded* state — never uncommitted work. `--prune` mirrors exactly
+  (extras trashed, never deleted).
+- Imports overlay the source onto your tree (ignore-filtered, `.vrs/` never
+  touched), then **snapshot automatically** — `import from …` lands in the
+  timeline. Re-imports are incremental (rsync-style quick-check).
+- Local-directory targets work identically — `vrs import ../old-copy` is a
+  one-command way to put an unversioned folder under version control.
+- **Not a sync engine.** Single, directional, whole-state operations. No
+  hooks, no restarts, no conflict detection — if you need sync, use rsync.
 
 ## Design
 

@@ -45,15 +45,10 @@ func runSave(args []string, out, errW io.Writer) error {
 	root, ok := paths.FindRoot(cwd)
 	var st *store.Store
 	if !ok {
-		poly, err := snap.RandomPolynomialHex()
+		st, root, err = initRepoHere(cwd)
 		if err != nil {
 			return err
 		}
-		st, err = store.InitAt(cwd, poly)
-		if err != nil {
-			return err
-		}
-		root = cwd
 		fmt.Fprintf(out, "initialized vrs repository in %s\n", root)
 	} else {
 		st, err = store.Open(root)

@@ -17,6 +17,9 @@ func run(t *testing.T, args ...string) (string, error) {
 
 func writeFile(t *testing.T, rel, content string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(rel, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
