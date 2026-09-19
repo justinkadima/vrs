@@ -83,9 +83,9 @@ func runSave(args []string, out, errW io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var prev map[string]snap.Prev
+	var prev map[string]snap.Entry
 	if base > 0 {
-		if prev, err = st.ParentEntries(base); err != nil {
+		if prev, err = st.SnapshotEntries(base); err != nil {
 			return err
 		}
 	}
@@ -113,7 +113,7 @@ func runSave(args []string, out, errW io.Writer) error {
 }
 
 // autoMessage derives a message from the changed paths when none is given.
-func autoMessage(entries []snap.Entry, prev map[string]snap.Prev, deleted int) string {
+func autoMessage(entries []snap.Entry, prev map[string]snap.Entry, deleted int) string {
 	if prev == nil {
 		return fmt.Sprintf("initial snapshot (%d files)", len(entries))
 	}

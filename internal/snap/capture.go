@@ -38,13 +38,7 @@ type CacheEntry struct {
 	MtimeNS int64
 	Size    int64
 	Hash    string
-}
-
-// Prev is a parent snapshot's view of a file, for change summaries.
-type Prev struct {
-	Hash string
-	Size int64
-	Mode int64
+	Mode    uint32
 }
 
 // Ignore decides which paths to exclude from snapshots.
@@ -123,7 +117,7 @@ func relPath(root, p string) string {
 
 // Summarize diffs current entries against a parent snapshot's state.
 // A nil parent counts everything as added (first snapshot).
-func Summarize(entries []Entry, prev map[string]Prev) (added, modified, deleted int) {
+func Summarize(entries []Entry, prev map[string]Entry) (added, modified, deleted int) {
 	if prev == nil {
 		return len(entries), 0, 0
 	}
@@ -131,7 +125,7 @@ func Summarize(entries []Entry, prev map[string]Prev) (added, modified, deleted 
 	for _, e := range entries {
 		cur[e.Path] = e
 		if p, ok := prev[e.Path]; ok {
-			if p.Hash != e.Hash || p.Mode != int64(e.Mode) {
+			if p.Hash != e.Hash || p.Mode != e.Mode {
 				modified++
 			}
 		} else {
@@ -147,14 +141,14 @@ func Summarize(entries []Entry, prev map[string]Prev) (added, modified, deleted 
 }
 
 // ChangedPaths lists the paths of added/modified files vs a parent snapshot.
-func ChangedPaths(entries []Entry, prev map[string]Prev) []string {
+func ChangedPaths(entries []Entry, prev map[string]Entry) []string {
 	var out []string
 	for _, e := range entries {
 		if prev == nil {
 			return nil
 		}
 		p, ok := prev[e.Path]
-		if !ok || p.Hash != e.Hash || p.Mode != int64(e.Mode) {
+		if !ok || p.Hash != e.Hash || p.Mode != e.Mode {
 			out = append(out, e.Path)
 		}
 	}

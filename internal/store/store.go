@@ -1,15 +1,17 @@
 // Package store persists vrs repositories: a single SQLite database per repo
-// holding snapshots, manifests, content-addressed chunks, the oplog and the
-// working-copy cache.
+// holding snapshots, manifests, content-addressed chunks, the oplog, the redo
+// stack and the working-copy cache.
 package store
 
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/justinkadima/vrs/internal/snap"
@@ -66,7 +68,8 @@ CREATE TABLE IF NOT EXISTS wc_cache (
   path      TEXT PRIMARY KEY,
   mtime_ns  INTEGER NOT NULL,
   size      INTEGER NOT NULL,
-  file_hash TEXT NOT NULL
+  file_hash TEXT NOT NULL,
+  mode      INTEGER NOT NULL
 );
 `
 
@@ -196,42 +199,92 @@ func (s *Store) Base() (int64, error) {
 
 // LoadCache returns the working-copy fast-path cache.
 func (s *Store) LoadCache() (map[string]snap.CacheEntry, error) {
-	rows, err := s.db.Query("SELECT path, mtime_ns, size, file_hash FROM wc_cache")
+	rows, err := s.db.Query("SELECT path, mtime_ns, size, file_hash, mode FROM wc_cache")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	m := make(map[string]snap.CacheEntry)
 	for rows.Next() {
-		var path, hash string
+		var path string
 		var c snap.CacheEntry
-		if err := rows.Scan(&path, &c.MtimeNS, &c.Size, &hash); err != nil {
+		var mode int64
+		if err := rows.Scan(&path, &c.MtimeNS, &c.Size, &c.Hash, &mode); err != nil {
 			return nil, err
 		}
-		c.Hash = hash
+		c.Mode = uint32(mode)
 		m[path] = c
 	}
 	return m, rows.Err()
 }
 
-// ParentEntries returns a snapshot's manifest as a path-keyed map.
-func (s *Store) ParentEntries(id int64) (map[string]snap.Prev, error) {
+// SnapshotEntries returns a snapshot's manifest as a path-keyed map.
+// MtimeNS is not persisted; loaded entries carry MtimeNS 0.
+func (s *Store) SnapshotEntries(id int64) (map[string]snap.Entry, error) {
 	rows, err := s.db.Query(
 		"SELECT path, file_hash, size, mode FROM entries WHERE snapshot = ?", id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	m := make(map[string]snap.Prev)
+	m := make(map[string]snap.Entry)
 	for rows.Next() {
-		var p string
-		var prev snap.Prev
-		if err := rows.Scan(&p, &prev.Hash, &prev.Size, &prev.Mode); err != nil {
+		var e snap.Entry
+		var mode int64
+		if err := rows.Scan(&e.Path, &e.Hash, &e.Size, &mode); err != nil {
 			return nil, err
 		}
-		m[p] = prev
+		e.Mode = uint32(mode)
+		m[e.Path] = e
 	}
 	return m, rows.Err()
+}
+
+// ReadVersion reassembles and decompresses the full bytes of a stored
+// version. Empty versions legitimately return zero bytes; a hash that is
+// recorded nowhere is an error.
+func (s *Store) ReadVersion(fileHash string) ([]byte, error) {
+	var known int
+	if err := s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM file_chunks WHERE file_hash = ?1) +
+		(SELECT COUNT(*) FROM entries WHERE file_hash = ?1)`,
+		fileHash).Scan(&known); err != nil {
+		return nil, err
+	}
+	if known == 0 {
+		return nil, fmt.Errorf("unknown version %.12s", fileHash)
+	}
+	rows, err := s.db.Query(
+		"SELECT chunk_hash FROM file_chunks WHERE file_hash = ? ORDER BY seq", fileHash)
+	if err != nil {
+		return nil, err
+	}
+	var hashes []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		hashes = append(hashes, h)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var out []byte
+	for _, h := range hashes {
+		var data []byte
+		if err := s.db.QueryRow("SELECT data FROM chunks WHERE hash = ?", h).Scan(&data); err != nil {
+			return nil, fmt.Errorf("missing chunk %.12s: %w", h, err)
+		}
+		dec, err := snap.Decompress(data)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dec...)
+	}
+	return out, nil
 }
 
 // SnapRow is one timeline row.
@@ -269,7 +322,73 @@ func (s *Store) ListSnapshots(all bool, limit int) ([]SnapRow, error) {
 	return out, rows.Err()
 }
 
-// --- writes ---------------------------------------------------------------
+// LatestSave returns the newest user-visible snapshot, if any.
+func (s *Store) LatestSave() (int64, bool, error) {
+	var id int64
+	err := s.db.QueryRow(
+		"SELECT id FROM snapshots WHERE kind = 'save' ORDER BY id DESC LIMIT 1").Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
+}
+
+// --- redo stack -------------------------------------------------------------
+
+// RedoEntry is one slot of the undo/redo stack (LIFO by id).
+type RedoEntry struct {
+	ID      int64
+	Capture int64 // pre-undo state (hidden snapshot)
+	Target  int64 // snapshot the undo restored to
+	Scope   string
+}
+
+// RedoPush records an undo on the redo stack.
+func (s *Store) RedoPush(capture, target int64, scope string) error {
+	_, err := s.db.Exec(
+		"INSERT INTO redo_stack (capture, target, scope) VALUES (?, ?, ?)",
+		capture, target, scope)
+	return err
+}
+
+// RedoPeek returns the top of the redo stack, or nil when empty.
+func (s *Store) RedoPeek() (*RedoEntry, error) {
+	e := &RedoEntry{}
+	err := s.db.QueryRow(
+		"SELECT id, capture, target, scope FROM redo_stack ORDER BY id DESC LIMIT 1").
+		Scan(&e.ID, &e.Capture, &e.Target, &e.Scope)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// RedoDelete pops a specific entry (after a successful redo).
+func (s *Store) RedoDelete(id int64) error {
+	_, err := s.db.Exec("DELETE FROM redo_stack WHERE id = ?", id)
+	return err
+}
+
+// --- oplog ------------------------------------------------------------------
+
+// PushOp journals a mutating operation.
+func (s *Store) PushOp(kind string, detail map[string]any) error {
+	b, err := json.Marshal(detail)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec("INSERT INTO ops (ts, kind, detail) VALUES (?, ?, ?)",
+		time.Now().UnixNano(), kind, string(b))
+	return err
+}
+
+// --- writes -----------------------------------------------------------------
 
 // SaveInfo reports what a Save did.
 type SaveInfo struct {
@@ -278,9 +397,10 @@ type SaveInfo struct {
 	NewStored int64 // bytes actually stored after compression
 }
 
-// Save writes a capture result as a new snapshot in one transaction:
-// snapshot row, manifest entries, new chunks (deduplicated), file versions,
-// working-copy cache, base pointer and oplog entry.
+// Save writes a capture result as a new snapshot in one transaction.
+// kind 'save' is a user-visible snapshot: it advances the base pointer and
+// clears the redo stack. kind 'capture' is a hidden safety-net snapshot made
+// before mutating commands: it does neither.
 func (s *Store) Save(res *snap.CaptureResult, message, kind string, parent int64) (*SaveInfo, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -349,14 +469,17 @@ func (s *Store) Save(res *snap.CaptureResult, message, kind string, parent int64
 		}
 	}
 
-	wStmt, err := tx.Prepare(`INSERT INTO wc_cache (path, mtime_ns, size, file_hash) VALUES (?, ?, ?, ?)
-		ON CONFLICT(path) DO UPDATE SET mtime_ns=excluded.mtime_ns, size=excluded.size, file_hash=excluded.file_hash`)
+	wStmt, err := tx.Prepare(`INSERT INTO wc_cache (path, mtime_ns, size, file_hash, mode)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET
+			mtime_ns=excluded.mtime_ns, size=excluded.size,
+			file_hash=excluded.file_hash, mode=excluded.mode`)
 	if err != nil {
 		return nil, err
 	}
 	defer wStmt.Close()
 	for _, e := range res.Entries {
-		if _, err := wStmt.Exec(e.Path, e.MtimeNS, e.Size, e.Hash); err != nil {
+		if _, err := wStmt.Exec(e.Path, e.MtimeNS, e.Size, e.Hash, e.Mode); err != nil {
 			return nil, err
 		}
 	}
@@ -364,10 +487,15 @@ func (s *Store) Save(res *snap.CaptureResult, message, kind string, parent int64
 		return nil, err
 	}
 
-	if _, err := tx.Exec(
-		"INSERT INTO meta (key, value) VALUES ('base', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-		strconv.FormatInt(id, 10)); err != nil {
-		return nil, err
+	if kind == "save" {
+		if _, err := tx.Exec(
+			"INSERT INTO meta (key, value) VALUES ('base', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+			strconv.FormatInt(id, 10)); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec("DELETE FROM redo_stack"); err != nil {
+			return nil, err
+		}
 	}
 
 	detail, err := json.Marshal(map[string]any{"snapshot": id, "files": len(res.Entries)})
@@ -382,4 +510,39 @@ func (s *Store) Save(res *snap.CaptureResult, message, kind string, parent int64
 		return nil, err
 	}
 	return info, nil
+}
+
+// SyncCache updates the working-copy cache after a materialize: written
+// entries are upserted, trashed paths are removed.
+func (s *Store) SyncCache(written []snap.Entry, trashed []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	wStmt, err := tx.Prepare(`INSERT INTO wc_cache (path, mtime_ns, size, file_hash, mode)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET
+			mtime_ns=excluded.mtime_ns, size=excluded.size,
+			file_hash=excluded.file_hash, mode=excluded.mode`)
+	if err != nil {
+		return err
+	}
+	defer wStmt.Close()
+	for _, e := range written {
+		if _, err := wStmt.Exec(e.Path, e.MtimeNS, e.Size, e.Hash, e.Mode); err != nil {
+			return err
+		}
+	}
+	if len(trashed) > 0 {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(trashed)), ",")
+		args := make([]any, len(trashed))
+		for i, p := range trashed {
+			args[i] = p
+		}
+		if _, err := tx.Exec("DELETE FROM wc_cache WHERE path IN ("+ph+")", args...); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

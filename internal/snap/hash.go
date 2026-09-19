@@ -1,6 +1,6 @@
 // Package snap captures the working tree into snapshots and materializes
-// snapshots back onto disk. M0 implements capture; content is stored as
-// content-addressed, CDC-chunked, zstd-compressed blobs.
+// snapshots back onto disk. Content is stored as content-addressed,
+// CDC-chunked, zstd-compressed blobs.
 package snap
 
 import (
@@ -16,7 +16,7 @@ import (
 
 // chunking parameters: ~64 KiB average chunk, 8 KiB floor, 512 KiB ceiling.
 const (
-	avgBits    = 16 // 2^16 = 64 KiB
+	avgBits    = 16 // 2^16 = 64 KiB average chunk
 	minChunk   = 8 * 1024
 	maxChunk   = 512 * 1024
 	chunkBufSz = 1 << 20 // must be >= maxChunk
@@ -24,6 +24,7 @@ const (
 
 var (
 	zEnc, _  = zstd.NewWriter(nil)
+	zDec, _  = zstd.NewReader(nil)
 	chunkBuf = make([]byte, chunkBufSz)
 )
 
@@ -52,7 +53,7 @@ func ParsePolynomial(s string) (chunker.Pol, error) {
 	return chunker.Pol(u), nil
 }
 
-// hashReader chunks r (CDC) while hashing the whole stream.
+// hashChunks chunks r (CDC) while hashing the whole stream.
 func hashChunks(r io.Reader, pol chunker.Pol) (string, []ChunkData, error) {
 	fileHash := sha256.New()
 	ch := chunker.New(io.TeeReader(r, fileHash), pol,
@@ -83,7 +84,12 @@ func HashFile(f *os.File, pol chunker.Pol) (string, []ChunkData, error) {
 	return hashChunks(f, pol)
 }
 
-// HashBytes is HashFile for in-memory content (used by tests and materialize paths).
+// HashBytes is HashFile for in-memory content.
 func HashBytes(b []byte, pol chunker.Pol) (string, []ChunkData, error) {
 	return hashChunks(bytesReader(b), pol)
+}
+
+// Decompress decodes chunk data produced by the encoder above.
+func Decompress(b []byte) ([]byte, error) {
+	return zDec.DecodeAll(b, nil)
 }

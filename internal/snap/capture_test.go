@@ -9,7 +9,7 @@ import (
 	"github.com/justinkadima/vrs/internal/ignore"
 )
 
-func writeFile(t *testing.T, dir, rel, content string) {
+func writeTestFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	p := filepath.Join(dir, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -30,12 +30,12 @@ func entryPaths(res *CaptureResult) []string {
 
 func TestCaptureWalksIgnoresAndCache(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "a.txt", "alpha")
-	writeFile(t, dir, "sub/b.txt", "beta")
-	writeFile(t, dir, "node_modules/x.js", "junk")
-	writeFile(t, dir, "skipme.txt", "no")
-	writeFile(t, dir, ".env", "SECRET=1")
-	writeFile(t, dir, "build", "a regular file named build")
+	writeTestFile(t, dir, "a.txt", "alpha")
+	writeTestFile(t, dir, "sub/b.txt", "beta")
+	writeTestFile(t, dir, "node_modules/x.js", "junk")
+	writeTestFile(t, dir, "skipme.txt", "no")
+	writeTestFile(t, dir, ".env", "SECRET=1")
+	writeTestFile(t, dir, "build", "a regular file named build")
 	if err := os.WriteFile(filepath.Join(dir, ".vrsignore"), []byte("skipme.txt\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -57,10 +57,9 @@ func TestCaptureWalksIgnoresAndCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := entryPaths(res)
 	want := []string{".vrsignore", "a.txt", "build", "sub/b.txt"}
-	if !equal(got, want) {
-		t.Fatalf("entries: want %v, got %v", want, got)
+	if !equal(entryPaths(res), want) {
+		t.Fatalf("entries: want %v, got %v", want, entryPaths(res))
 	}
 	if len(res.Versions) != 4 {
 		t.Fatalf("want 4 versions (all files hashed), got %d", len(res.Versions))
@@ -69,7 +68,7 @@ func TestCaptureWalksIgnoresAndCache(t *testing.T) {
 	// Fast path: feeding the capture back as the cache re-hashes nothing.
 	cache := make(map[string]CacheEntry)
 	for _, e := range res.Entries {
-		cache[e.Path] = CacheEntry{MtimeNS: e.MtimeNS, Size: e.Size, Hash: e.Hash}
+		cache[e.Path] = CacheEntry{MtimeNS: e.MtimeNS, Size: e.Size, Hash: e.Hash, Mode: e.Mode}
 	}
 	res2, err := Capture(dir, pol, cache, ig)
 	if err != nil {
@@ -79,11 +78,11 @@ func TestCaptureWalksIgnoresAndCache(t *testing.T) {
 		t.Fatalf("fast path failed: %d versions re-hashed", len(res2.Versions))
 	}
 	if !equal(entryPaths(res2), want) {
-		t.Fatalf("fast path changed entries")
+		t.Fatal("fast path changed entries")
 	}
 
 	// A modified file (size change → cache miss) yields exactly one version.
-	writeFile(t, dir, "a.txt", "alpha-changed")
+	writeTestFile(t, dir, "a.txt", "alpha-changed")
 	res3, err := Capture(dir, pol, cache, ig)
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +122,7 @@ func TestIgnoreNegationReincludesBuiltin(t *testing.T) {
 }
 
 func TestSummarize(t *testing.T) {
-	prev := map[string]Prev{
+	prev := map[string]Entry{
 		"a.txt": {Hash: "old", Size: 1, Mode: 0o644},
 		"c.txt": {Hash: "gone", Size: 1, Mode: 0o644},
 	}
@@ -137,6 +136,13 @@ func TestSummarize(t *testing.T) {
 	}
 	if got := ChangedPaths(entries, prev); len(got) != 2 {
 		t.Fatalf("changed paths: %v", got)
+	}
+	// Mode-only change counts as modified.
+	entries[0].Hash = "old" // content now matches prev
+	entries[0].Mode = 0o600
+	_, modified, _ = Summarize(entries, prev)
+	if modified != 1 {
+		t.Fatalf("mode change not detected: %d", modified)
 	}
 	// First snapshot: everything added.
 	a, m, d := Summarize(entries, nil)

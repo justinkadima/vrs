@@ -8,12 +8,16 @@ import (
 )
 
 // Version is the vrs build version.
-const Version = "0.1.0-m0"
+const Version = "0.1.0-m1"
 
 const usage = `vrs — snapshots for your code
 
 Usage:
   vrs save [message] [-m msg]   snapshot the working tree (auto-initializes)
+  vrs diff [path]                changes vs the latest snapshot
+                                (with a path: unified content diff)
+  vrs undo [path]               restore the working copy from the latest snapshot
+  vrs redo [--force]            reapply the last undone change
   vrs log [-n N] [--all]        show the timeline
   vrs version                   print version
   vrs help                      show this help
@@ -32,6 +36,12 @@ func Run(args []string, out, errW io.Writer) error {
 	switch args[0] {
 	case "save":
 		return runSave(args[1:], out, errW)
+	case "diff":
+		return runDiff(args[1:], out, errW)
+	case "undo":
+		return runUndo(args[1:], out, errW)
+	case "redo":
+		return runRedo(args[1:], out, errW)
 	case "log":
 		return runLog(args[1:], out, errW)
 	case "version":

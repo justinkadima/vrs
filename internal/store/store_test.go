@@ -1,6 +1,8 @@
 package store
 
 import (
+	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/justinkadima/vrs/internal/snap"
@@ -107,7 +109,7 @@ func TestSaveDedupAndRefcounts(t *testing.T) {
 	}
 
 	// Manifests are per-snapshot and correct.
-	pe, err := s.ParentEntries(info3.ID)
+	pe, err := s.SnapshotEntries(info3.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,22 +127,120 @@ func TestSaveDedupAndRefcounts(t *testing.T) {
 	}
 }
 
-func TestListSnapshotsLimit(t *testing.T) {
+func TestSaveVsCaptureSemantics(t *testing.T) {
 	s := newTestStore(t)
-	e, v := versionOf(t, s, "a.txt", "x")
-	var last int64
-	for i := 0; i < 3; i++ {
-		info, err := s.Save(&snap.CaptureResult{Entries: []snap.Entry{e}, Versions: []snap.Version{v}}, "m", "save", last)
-		if err != nil {
-			t.Fatal(err)
-		}
-		last = info.ID
-	}
-	rows, err := s.ListSnapshots(false, 2)
+	e, v := versionOf(t, s, "a.txt", "hello")
+	res := &snap.CaptureResult{Entries: []snap.Entry{e}, Versions: []snap.Version{v}}
+	info1, err := s.Save(res, "first", "save", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 || rows[0].ID != 3 {
-		t.Fatalf("limit broken: %+v", rows)
+
+	// Stack is LIFO.
+	if err := s.RedoPush(1, 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RedoPush(2, 2, ""); err != nil {
+		t.Fatal(err)
+	}
+	top, err := s.RedoPeek()
+	if err != nil || top == nil || top.Target != 2 {
+		t.Fatalf("peek: %v %v", top, err)
+	}
+
+	// Captures: no base advance, no redo clear, hidden from log.
+	capInfo, err := s.Save(&snap.CaptureResult{Entries: []snap.Entry{e}}, "", "capture", info1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, _ := s.Base()
+	if base != info1.ID {
+		t.Fatalf("capture advanced base: %d", base)
+	}
+	if top, _ = s.RedoPeek(); top == nil {
+		t.Fatal("capture cleared the redo stack")
+	}
+	rows, _ := s.ListSnapshots(false, 0)
+	for _, r := range rows {
+		if r.ID == capInfo.ID {
+			t.Fatal("capture visible in default log")
+		}
+	}
+	all, _ := s.ListSnapshots(true, 0)
+	if len(all) != 2 {
+		t.Fatalf("log --all should show capture: %+v", all)
+	}
+
+	// Saves: advance base and clear the redo stack.
+	info3, err := s.Save(&snap.CaptureResult{Entries: []snap.Entry{e}}, "second", "save", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.Base(); b != info3.ID {
+		t.Fatalf("save did not advance base: %d", b)
+	}
+	if top, _ = s.RedoPeek(); top != nil {
+		t.Fatal("save did not clear the redo stack")
+	}
+
+	// Pop semantics.
+	if err := s.RedoPush(10, 11, "x"); err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := s.RedoPeek()
+	if err := s.RedoDelete(entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if top, _ = s.RedoPeek(); top != nil {
+		t.Fatal("redo delete failed")
+	}
+}
+
+func TestReadVersionRoundtrip(t *testing.T) {
+	s := newTestStore(t)
+
+	var b bytes.Buffer
+	for i := 0; i < 4000; i++ {
+		fmt.Fprintf(&b, "line %04d of a somewhat compressible payload\n", i)
+	}
+	content := b.String() // ~140 KiB → multiple chunks
+
+	e, v := versionOf(t, s, "big.txt", content)
+	if len(v.Chunks) < 2 {
+		t.Fatalf("expected multiple chunks, got %d", len(v.Chunks))
+	}
+	if _, err := s.Save(&snap.CaptureResult{Entries: []snap.Entry{e}, Versions: []snap.Version{v}}, "big", "save", 0); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadVersion(e.Hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, []byte(content)) {
+		t.Fatalf("roundtrip mismatch: %d bytes", len(got))
+	}
+
+	// Unknown version errors.
+	if _, err := s.ReadVersion("nope"); err == nil {
+		t.Fatal("expected error for unknown version")
+	}
+
+	// Empty file: zero chunks, empty read.
+	hexStr, _ := s.Meta("chunker_poly")
+	pol, _ := snap.ParsePolynomial(hexStr)
+	emptyHash, emptyChunks, err := snap.HashBytes(nil, pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(emptyChunks) != 0 {
+		t.Fatalf("empty file should chunk to nothing, got %d", len(emptyChunks))
+	}
+	ee := snap.Entry{Path: "empty.txt", Hash: emptyHash, Size: 0, Mode: 0o644, MtimeNS: 1}
+	ev := snap.Version{FileHash: emptyHash, Size: 0}
+	if _, err := s.Save(&snap.CaptureResult{Entries: []snap.Entry{ee}, Versions: []snap.Version{ev}}, "empty", "save", 1); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.ReadVersion(emptyHash); err != nil || len(got) != 0 {
+		t.Fatalf("empty read: %d bytes, err %v", len(got), err)
 	}
 }
