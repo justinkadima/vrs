@@ -89,6 +89,18 @@ func runSave(args []string, out, errW io.Writer) error {
 			return err
 		}
 	}
+	// Saving while positioned on an older snapshot (after `vrs goto`)
+	// starts a new line from that position — warn, never silently.
+	forkFrom, oldTip := int64(0), int64(0)
+	if base > 0 {
+		tip, ok, err := st.LatestSave()
+		if err != nil {
+			return err
+		}
+		if ok && tip != base {
+			forkFrom, oldTip = base, tip
+		}
+	}
 
 	res, err := snap.Capture(root, pol, cache, ig)
 	if err != nil {
@@ -109,6 +121,10 @@ func runSave(args []string, out, errW io.Writer) error {
 	fmt.Fprintf(out, "#%d saved — %d files: %d added, %d modified, %d deleted — %s new (%s compressed)\n",
 		info.ID, len(res.Entries), added, modified, deleted,
 		humanBytes(info.NewRaw), humanBytes(info.NewStored))
+	if oldTip > 0 {
+		fmt.Fprintf(out, "note: saved from a past position — #%d starts a new line from #%d (the tip was #%d)\n",
+			info.ID, forkFrom, oldTip)
+	}
 	return nil
 }
 

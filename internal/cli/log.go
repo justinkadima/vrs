@@ -54,5 +54,12 @@ func runLog(args []string, out, errW io.Writer) error {
 		fmt.Fprintf(out, "#%-4d %s  %s%s\n",
 			r.ID, time.Unix(0, r.TS).Format("2006-01-02 15:04"), msg, tag)
 	}
+	// If the working copy is positioned on an older snapshot (after goto),
+	// say so — the timeline alone doesn't show it.
+	if base, err := st.Base(); err == nil && base > 0 {
+		if tip, ok, err := st.LatestSave(); err == nil && ok && tip != base {
+			fmt.Fprintf(out, "\nyou are at #%d — the tip is #%d (save here to start a new line, `vrs goto` to return)\n", base, tip)
+		}
+	}
 	return nil
 }

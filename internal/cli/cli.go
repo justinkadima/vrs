@@ -8,19 +8,24 @@ import (
 )
 
 // Version is the vrs build version.
-const Version = "0.1.0-m1"
+const Version = "0.1.0-m2"
 
 const usage = `vrs — snapshots for your code
 
 Usage:
   vrs save [message] [-m msg]   snapshot the working tree (auto-initializes)
-  vrs diff [path]                changes vs the latest snapshot
+  vrs diff [path] [@ref]        changes vs the snapshot you are on
                                 (with a path: unified content diff)
-  vrs undo [path]               restore the working copy from the latest snapshot
+  vrs undo [path] [@ref]        restore the working copy from a snapshot
   vrs redo [--force]            reapply the last undone change
-  vrs log [-n N] [--all]        show the timeline
+  vrs goto [@ref]               jump the working copy to any snapshot
+                                (no argument = newest save)
+  vrs log [-n N] [--all]        show the timeline (captures only with --all)
   vrs version                   print version
   vrs help                      show this help
+
+Refs: @N = snapshot #N · @-N = N saves back from the tip · @2h = newest
+snapshot at least 2h old (@30m, @3d, @1w also work).
 `
 
 // ErrUsage signals a usage error (exit code 2).
@@ -42,6 +47,8 @@ func Run(args []string, out, errW io.Writer) error {
 		return runUndo(args[1:], out, errW)
 	case "redo":
 		return runRedo(args[1:], out, errW)
+	case "goto":
+		return runGoto(args[1:], out, errW)
 	case "log":
 		return runLog(args[1:], out, errW)
 	case "version":

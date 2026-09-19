@@ -195,6 +195,49 @@ func (s *Store) Base() (int64, error) {
 	return n, nil
 }
 
+// SetBase moves the working copy's position to the given snapshot (goto).
+func (s *Store) SetBase(id int64) error {
+	return s.setMeta("base", strconv.FormatInt(id, 10))
+}
+
+// SnapshotExists reports whether any snapshot (save or capture) has this id.
+func (s *Store) SnapshotExists(id int64) (bool, error) {
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM snapshots WHERE id = ?", id).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// NthNewestSave returns the id of the n-th newest save (n=0 is the newest).
+// Captures are skipped: relative refs count the visible timeline.
+func (s *Store) NthNewestSave(n int64) (int64, error) {
+	var count int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM snapshots WHERE kind = 'save'").Scan(&count); err != nil {
+		return 0, err
+	}
+	if n < 0 || n >= count {
+		return 0, fmt.Errorf("history has %d save(s); @-%d is out of range", count, n)
+	}
+	var id int64
+	err := s.db.QueryRow(
+		"SELECT id FROM snapshots WHERE kind = 'save' ORDER BY id DESC LIMIT 1 OFFSET ?", n).Scan(&id)
+	return id, err
+}
+
+// NewestSaveBefore returns the id of the newest save whose timestamp is at
+// or before cutoff (unix nanos).
+func (s *Store) NewestSaveBefore(cutoff int64) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(
+		"SELECT id FROM snapshots WHERE kind = 'save' AND ts <= ? ORDER BY id DESC LIMIT 1",
+		cutoff).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("no snapshot is that old")
+	}
+	return id, err
+}
+
 // --- reads ----------------------------------------------------------------
 
 // LoadCache returns the working-copy fast-path cache.
@@ -372,6 +415,12 @@ func (s *Store) RedoPeek() (*RedoEntry, error) {
 // RedoDelete pops a specific entry (after a successful redo).
 func (s *Store) RedoDelete(id int64) error {
 	_, err := s.db.Exec("DELETE FROM redo_stack WHERE id = ?", id)
+	return err
+}
+
+// RedoClear empties the redo stack (any working-copy mutation invalidates it).
+func (s *Store) RedoClear() error {
+	_, err := s.db.Exec("DELETE FROM redo_stack")
 	return err
 }
 

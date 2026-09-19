@@ -333,3 +333,138 @@ func TestMessageFromPositional(t *testing.T) {
 		t.Fatalf("positional message lost: %q", out)
 	}
 }
+
+func TestGotoAndRefs(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	run2 := func(args ...string) string {
+		out, err := run(t, args...)
+		if err != nil {
+			t.Fatalf("vrs %v: %v\n%s", args, err, out)
+		}
+		return out
+	}
+
+	// #1 a.txt=one; #2 a.txt=two; #3 adds b.txt.
+	writeFile(t, "a.txt", "one\n")
+	run2("save", "base")
+	writeFile(t, "a.txt", "two\n")
+	run2("save", "edit")
+	writeFile(t, "b.txt", "beta\n")
+	run2("save", "add b")
+
+	// goto @1: full-tree materialize, capture #4 first.
+	out := run2("goto", "@1")
+	if !strings.Contains(out, "working copy now at #1") || !strings.Contains(out, "captured as #4") {
+		t.Fatalf("goto: %s", out)
+	}
+	if read(t, "a.txt") != "one\n" {
+		t.Fatalf("goto did not restore a.txt: %q", read(t, "a.txt"))
+	}
+	if _, err := os.Stat("b.txt"); !os.IsNotExist(err) {
+		t.Fatal("b.txt should be trashed by goto")
+	}
+
+	// Position semantics: diff/undo compare against #1, not the tip #3.
+	out = run2("diff")
+	if !strings.Contains(out, "no changes — matches #1") {
+		t.Fatalf("diff after goto: %s", out)
+	}
+	out = run2("undo")
+	if !strings.Contains(out, "nothing to undo — working tree matches #1") {
+		t.Fatalf("undo after goto: %s", out)
+	}
+
+	// log shows the position when behind the tip.
+	out = run2("log")
+	if !strings.Contains(out, "you are at #1") || !strings.Contains(out, "the tip is #3") {
+		t.Fatalf("log position line: %s", out)
+	}
+
+	// Saving from a past position forks a new line (#5, parent = #1).
+	writeFile(t, "a.txt", "three\n")
+	out = run2("save", "-m", "fork")
+	if !strings.Contains(out, "#5 saved") || !strings.Contains(out, "starts a new line from #1 (the tip was #3)") {
+		t.Fatalf("fork save: %s", out)
+	}
+	out = run2("log")
+	if strings.Contains(out, "you are at") {
+		t.Fatalf("position line after fork save should be gone: %s", out)
+	}
+
+	// diff @1 compares the position (#5 state, no b.txt — goto trashed it)
+	// against snapshot #1.
+	out = run2("diff", "@1")
+	if !strings.Contains(out, "modified  a.txt") {
+		t.Fatalf("diff @1: %s", out)
+	}
+	// Per-file diff against an @ref.
+	out = run2("diff", "a.txt", "@1")
+	for _, want := range []string{"--- #1:a.txt", "-one", "+three"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("diff a.txt @1 missing %q:\n%s", want, out)
+		}
+	}
+
+	// undo @2: restore from an older snapshot, then redo re-applies.
+	writeFile(t, "a.txt", "four\n")
+	out = run2("undo", "@2")
+	if !strings.Contains(out, "restored to #2") {
+		t.Fatalf("undo @2: %s", out)
+	}
+	if read(t, "a.txt") != "two\n" {
+		t.Fatalf("undo @2 result: %q", read(t, "a.txt"))
+	}
+	out = run2("redo")
+	if !strings.Contains(out, "redone") {
+		t.Fatalf("redo after undo @2: %s", out)
+	}
+	if read(t, "a.txt") != "four\n" {
+		t.Fatalf("redo result: %q", read(t, "a.txt"))
+	}
+
+	// Relative ref: saves are #1 #2 #3 #5 → @-1 = #3.
+	out = run2("goto", "@-1")
+	if !strings.Contains(out, "working copy now at #3") {
+		t.Fatalf("goto @-1: %s", out)
+	}
+	if read(t, "a.txt") != "two\n" || read(t, "b.txt") != "beta\n" {
+		t.Fatal("goto @-1 did not restore the #3 state")
+	}
+
+	// No-argument goto returns to the tip (#5 = the fork save, a.txt=three;
+	// the "four" state lives on in capture #6, nothing lost).
+	out = run2("goto")
+	if !strings.Contains(out, "working copy now at #5") {
+		t.Fatalf("goto to tip: %s", out)
+	}
+	if read(t, "a.txt") != "three\n" {
+		t.Fatalf("goto to tip result: %q", read(t, "a.txt"))
+	}
+
+	// Idempotent goto: already at the tip, no capture.
+	out = run2("goto", "@5")
+	if !strings.Contains(out, "working copy already at #5") {
+		t.Fatalf("noop goto: %s", out)
+	}
+
+	// goto cleared the redo stack (mutation invalidates redo).
+	out = run2("redo")
+	if !strings.Contains(out, "nothing to redo") {
+		t.Fatalf("redo after goto: %s", out)
+	}
+
+	// Errors: unknown id, out-of-range relative, nothing that old.
+	if _, err := run(t, "goto", "@99"); err == nil || !strings.Contains(err.Error(), "no snapshot #99") {
+		t.Fatalf("goto @99: %v", err)
+	}
+	if _, err := run(t, "goto", "@-9"); err == nil || !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("goto @-9: %v", err)
+	}
+	if _, err := run(t, "goto", "@2h"); err == nil || !strings.Contains(err.Error(), "that old") {
+		t.Fatalf("goto @2h: %v", err)
+	}
+	if _, err := run(t, "diff", "a.txt", "@bogus"); err == nil || !strings.Contains(err.Error(), "bad snapshot reference") {
+		t.Fatalf("diff @bogus: %v", err)
+	}
+}

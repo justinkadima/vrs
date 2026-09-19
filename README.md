@@ -4,8 +4,8 @@ Snapshots for your code. A version control system for solo developers:
 numbered snapshots of your folder, diffs against the last snapshot, and
 undo/redo — no staging area, no branches, no remotes, no ceremony.
 
-**Status: M1 (pre-alpha).** `save`, `log`, `diff`, `undo`, and `redo` work.
-`goto` and `@refs` land next — see [PLAN.md](PLAN.md) for the full roadmap.
+**Status: M2 (pre-alpha).** `save`, `log`, `diff`, `undo`, `redo`, `goto`, and
+`@refs` work. Next: hardening + v0.1.0 — see [PLAN.md](PLAN.md) for the roadmap.
 
 ## Install
 
@@ -34,17 +34,15 @@ nothing to save — working tree matches #1
 $ vrs save -m "bug fixed"     # message via flag or positional argument
 #2 saved — 42 files: 0 added, 2 modified, 0 deleted — 3.4 KiB new
 
-$ vrs diff                    # changes vs the latest snapshot
+$ vrs diff                    # changes vs the snapshot you are on
 added     notes.md
 modified  main.go
 deleted   old.txt
 
-$ vrs diff main.go             # unified diff vs the latest snapshot
---- #3:main.go
-+++ main.go
-@@ -12,3 +12,4 @@
+$ vrs diff main.go             # unified content diff
+$ vrs diff main.go @2           # ... against any snapshot
 
-$ vrs undo                     # working copy back to the latest snapshot
+$ vrs undo                     # working copy back to the snapshot you are on
 undid 2 change(s) — working tree restored to #3
   2 file(s) written
   1 file(s) moved to .vrs/trash/1780000000000000000
@@ -53,19 +51,35 @@ previous state captured as #7 — `vrs redo` to reapply
 $ vrs redo                     # changed your mind? reapply
 redone — 2 file(s) written, 1 trashed (state from capture #7)
 
+$ vrs goto @1                  # time travel: working copy back to #1
+working copy now at #1 — previous state captured as #8 (`vrs log --all`)
+  1 file(s) written
+  1 file(s) moved to .vrs/trash/1780000001000000000
+you are behind the tip (#3) — save here to start a new line from #1, or `vrs goto` (no argument) to return
+
+$ vrs goto                     # no argument = return to the tip
+
 $ vrs log
 #3    2026-09-19 01:09  bug fixed
 #2    2026-09-19 01:07  wip auth
 #1    2026-09-19 01:05  initial snapshot (42 files)
+
+$ vrs log --all                # include the hidden captures
 ```
 
 - Snapshots are **full-tree** and **append-only** — history can never be
   rewritten or lost by any command.
-- **Nothing is ever lost**: `undo`/`redo` capture your current state as a
-  hidden snapshot before touching anything (`vrs log --all` to see them).
+- **Nothing is ever lost**: `undo`/`redo`/`goto` capture your current state
+  as a hidden snapshot before touching anything (`vrs log --all` to see them).
+- The working copy always sits **on** a snapshot (the tip after `save`, the
+  target after `goto`); `diff` and `undo` compare against that position.
 - `redo` refuses to clobber edits you made after an undo (editor convention);
   `vrs redo --force` captures your state first, then overwrites.
-- Files removed by `undo`/`redo` go to `.vrs/trash/`, never hard-deleted.
+- Files removed by `undo`/`redo`/`goto` go to `.vrs/trash/`, never hard-deleted.
+- `@refs` everywhere: `@3` (snapshot #3), `@-2` (two saves back), `@2h`
+  (newest snapshot at least 2h old) — `vrs log` for the numbers.
+- Saving from a past position (after `goto`) **forks a new line** — vrs says
+  so, and every old snapshot stays intact.
 - Unchanged files cost **zero bytes** per save: content is content-addressed,
   CDC-chunked (~64 KiB), zstd-compressed.
 - The entire history lives in **one file**: `.vrs/vrs.db` (SQLite).

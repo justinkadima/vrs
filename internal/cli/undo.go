@@ -15,9 +15,13 @@ func runUndo(args []string, out, errW io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return ErrUsage
 	}
-	if fs.NArg() > 1 {
-		fmt.Fprintln(errW, "usage: vrs undo [path]")
+	if fs.NArg() > 2 {
+		fmt.Fprintln(errW, "usage: vrs undo [path] [@ref]")
 		return ErrUsage
+	}
+	path, ref, err := scanTargetArgs(fs.Args())
+	if err != nil {
+		return err
 	}
 	rc, err := openRepo()
 	if err != nil {
@@ -25,11 +29,18 @@ func runUndo(args []string, out, errW io.Writer) error {
 	}
 	defer rc.st.Close()
 
-	targetID, ok, err := rc.st.LatestSave()
+	// Restore from the snapshot the working copy sits on (position),
+	// or an explicit @ref.
+	targetID, err := rc.st.Base()
 	if err != nil {
 		return err
 	}
-	if !ok {
+	if ref != nil {
+		if targetID, err = resolveRef(rc.st, *ref); err != nil {
+			return err
+		}
+	}
+	if targetID == 0 {
 		fmt.Fprintln(out, "no snapshots yet — run `vrs save` first")
 		return nil
 	}
@@ -37,7 +48,7 @@ func runUndo(args []string, out, errW io.Writer) error {
 	if err != nil {
 		return err
 	}
-	scope, err := rc.resolveScope(fs.Arg(0))
+	scope, err := rc.resolveScope(path)
 	if err != nil {
 		return err
 	}

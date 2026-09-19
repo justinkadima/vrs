@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/justinkadima/vrs/internal/snap"
 )
@@ -242,5 +243,100 @@ func TestReadVersionRoundtrip(t *testing.T) {
 	}
 	if got, err = s.ReadVersion(emptyHash); err != nil || len(got) != 0 {
 		t.Fatalf("empty read: %d bytes, err %v", len(got), err)
+	}
+}
+
+func TestRefQueries(t *testing.T) {
+	s := newTestStore(t)
+	e, v := versionOf(t, s, "a.txt", "hello")
+	res := &snap.CaptureResult{Entries: []snap.Entry{e}, Versions: []snap.Version{v}}
+
+	// saves #1, #2, capture #3, save #4 (ids strictly increasing in time)
+	if _, err := s.Save(res, "one", "save", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(res, "two", "save", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(res, "", "capture", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(res, "three", "save", 2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Relative refs skip captures: @-0 = #4, @-1 = #2, @-2 = #1.
+	for back, want := range map[int64]int64{0: 4, 1: 2, 2: 1} {
+		id, err := s.NthNewestSave(back)
+		if err != nil || id != want {
+			t.Fatalf("NthNewestSave(%d) = %d, %v; want %d", back, id, err, want)
+		}
+	}
+	if _, err := s.NthNewestSave(3); err == nil {
+		t.Fatal("out-of-range offset should fail")
+	}
+	if _, err := s.NthNewestSave(-1); err == nil {
+		t.Fatal("negative offset should fail")
+	}
+
+	// Absolute ids address captures too.
+	for id, want := range map[int64]bool{1: true, 3: true, 4: true, 99: false, 0: false} {
+		ok, err := s.SnapshotExists(id)
+		if err != nil || ok != want {
+			t.Fatalf("SnapshotExists(%d) = %v, %v; want %v", id, ok, err, want)
+		}
+	}
+
+	// Time refs: insert two old saves with hand-set timestamps.
+	old := time.Now().Add(-3 * time.Hour).UnixNano()
+	older := time.Now().Add(-1 * time.Hour).UnixNano()
+	if _, err := s.db.Exec(
+		"INSERT INTO snapshots (id, ts, kind, message, parent) VALUES (?, ?, 'save', 'old', 4)", 5, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO snapshots (id, ts, kind, message, parent) VALUES (?, ?, 'save', 'older', 5)", 6, older); err != nil {
+		t.Fatal(err)
+	}
+	// Newest save at least 30m old: #6 (1h old), not #5 (3h old).
+	id, err := s.NewestSaveBefore(time.Now().Add(-30 * time.Minute).UnixNano())
+	if err != nil || id != 6 {
+		t.Fatalf("NewestSaveBefore(-30m) = %d, %v; want 6", id, err)
+	}
+	// At least 2h old: #5.
+	id, err = s.NewestSaveBefore(time.Now().Add(-2 * time.Hour).UnixNano())
+	if err != nil || id != 5 {
+		t.Fatalf("NewestSaveBefore(-2h) = %d, %v; want 5", id, err)
+	}
+	// Nothing is 10h old.
+	if _, err = s.NewestSaveBefore(time.Now().Add(-10 * time.Hour).UnixNano()); err == nil {
+		t.Fatal("NewestSaveBefore beyond history should fail")
+	}
+}
+
+func TestSetBaseAndRedoClear(t *testing.T) {
+	s := newTestStore(t)
+	e, v := versionOf(t, s, "a.txt", "hello")
+	res := &snap.CaptureResult{Entries: []snap.Entry{e}, Versions: []snap.Version{v}}
+	info, err := s.Save(res, "one", "save", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetBase(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.Base(); b != info.ID {
+		t.Fatalf("SetBase failed: %d", b)
+	}
+
+	if err := s.RedoPush(1, 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RedoClear(); err != nil {
+		t.Fatal(err)
+	}
+	if top, _ := s.RedoPeek(); top != nil {
+		t.Fatal("RedoClear failed")
 	}
 }
