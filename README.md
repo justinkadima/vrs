@@ -143,6 +143,11 @@ previous state captured as #6 — `vrs goto @6` to recover
   is the only way to inline a port; otherwise `~/.ssh/config` Port applies;
   aliases, agent and key auth, `known_hosts` enforced) or plain local
   directories.
+- vrs prefers the host key *types* already recorded in your `known_hosts` —
+  like OpenSSH — so a server offering several key types verifies against the
+  key you've already trusted. (First contact still happens through `ssh`
+  itself, which writes the entry.) Passphrase-protected keys need
+  `ssh-add` (the agent); vrs never prompts.
 - Exports are **incremental** via a manifest at the target and always ship
   *recorded* state — never uncommitted work. `--prune` mirrors exactly
   (extras trashed, never deleted).

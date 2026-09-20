@@ -283,6 +283,11 @@ If you want sync, use rsync — vrs is your undo button, not your sync engine.
 
 - `ssh://[user@]host[:port]/abs/path` — SSH/SFTP URI form; an explicit port
   overrides `~/.ssh/config` Port. Added in v0.3.1.
+- v0.3.2: host key algorithms are ordered by the user's `known_hosts`
+  entries (OpenSSH behavior). x/crypto's default order otherwise asks
+  servers for key types with no recorded entry, failing verification with
+  "key mismatch" on properly known hosts (common with modern servers
+  offering ed25519 + ECDSA + RSA).
 - `[user@]host:/abs/path` — SSH/SFTP. `~/.ssh/config` aliases (Hostname,
   User, Port, IdentityFile) are honored; auth is agent + keys only
   (passwords unsupported in v1); host keys are checked against

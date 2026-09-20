@@ -2,7 +2,9 @@ package remote
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/pem"
 	"fmt"
@@ -11,28 +13,46 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // startSSHServer runs an in-process SSH server that accepts exactly one
 // public key and serves the SFTP subsystem over the real filesystem.
 // It returns the address, a known_hosts file trusting the server, and the
 // client identity file vrs should present.
-func startSSHServer(t *testing.T) (addr, knownHosts, clientKeyPath string) {
+func mustEd25519(t *testing.T) ed25519.PrivateKey {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return priv
+}
+
+func mustClientSigner(t *testing.T, keyPath string) ssh.Signer {
+	t.Helper()
+	b, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := ssh.ParsePrivateKey(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// startSSHServerKeys runs an in-process SSH server offering the given
+// host keys, accepting a freshly generated client key. It returns the
+// listen address and the client key path; the test writes its own
+// known_hosts.
+func startSSHServerKeys(t *testing.T, hostSigners ...ssh.Signer) (addr, clientKeyPath string) {
 	t.Helper()
 	dir := t.TempDir()
-
-	hostPub, hostPriv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = hostPub
-	hostSigner, err := ssh.NewSignerFromKey(hostPriv)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	clientPub, clientPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -65,7 +85,9 @@ func startSSHServer(t *testing.T) (addr, knownHosts, clientKeyPath string) {
 			return nil, fmt.Errorf("unknown key")
 		},
 	}
-	cfg.AddHostKey(hostSigner)
+	for _, hs := range hostSigners {
+		cfg.AddHostKey(hs)
+	}
 
 	go func() {
 		for {
@@ -76,14 +98,24 @@ func startSSHServer(t *testing.T) (addr, knownHosts, clientKeyPath string) {
 			go handleSSHConn(conn, cfg)
 		}
 	}()
+	return ln.Addr().String(), clientKeyPath
+}
 
-	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
-	knownHosts = filepath.Join(dir, "known_hosts")
+func startSSHServer(t *testing.T) (addr, knownHosts, clientKeyPath string) {
+	t.Helper()
+	hostSigner, err := ssh.NewSignerFromKey(mustEd25519(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, clientKeyPath = startSSHServerKeys(t, hostSigner)
+
+	host, portStr, _ := net.SplitHostPort(addr)
+	knownHosts = filepath.Join(t.TempDir(), "known_hosts")
 	line := fmt.Sprintf("[%s]:%s %s", host, portStr, string(ssh.MarshalAuthorizedKey(hostSigner.PublicKey())))
 	if err := os.WriteFile(knownHosts, []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return ln.Addr().String(), knownHosts, clientKeyPath
+	return addr, knownHosts, clientKeyPath
 }
 
 func handleSSHConn(conn net.Conn, cfg *ssh.ServerConfig) {
@@ -267,4 +299,59 @@ func TestURITargetExport(t *testing.T) {
 	if len(res.Written) != 1 {
 		t.Fatalf("uri export: %+v", res)
 	}
+}
+
+// The regression test for the "knownhosts: key mismatch" trap: a server
+// offering several host key types (here ECDSA + ed25519), but known_hosts
+// recording only one of them (ed25519 — what OpenSSH clients normally
+// write). x/crypto's default preference asks for ECDSA first; without
+// reordering by known_hosts, verification fails on a properly known host.
+func TestHostKeyAlgoPreference(t *testing.T) {
+	dir := t.TempDir()
+
+	edSigner, err := ssh.NewSignerFromKey(mustEd25519(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ecSigner, err := ssh.NewSignerFromKey(ecKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr, clientKeyPath := startSSHServerKeys(t, edSigner, ecSigner)
+	host, port, _ := net.SplitHostPort(addr)
+
+	// known_hosts records ONLY the ed25519 key.
+	knownHosts := filepath.Join(dir, "known_hosts")
+	line := fmt.Sprintf("[%s]:%s %s", host, port, string(ssh.MarshalAuthorizedKey(edSigner.PublicKey())))
+	if err := os.WriteFile(knownHosts, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Proof of the trap: the default algorithm order fails against a
+	// properly known host.
+	kh, err := knownhosts.New(knownHosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ssh.Dial("tcp", addr, &ssh.ClientConfig{
+		User:            "test",
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(mustClientSigner(t, clientKeyPath))},
+		HostKeyCallback: kh,
+		Timeout:         5 * time.Second,
+	})
+	if err == nil || !strings.Contains(err.Error(), "key mismatch") {
+		t.Fatalf("default order should hit the key-mismatch trap, got %v", err)
+	}
+
+	// vrs's Connect reorders by known_hosts and connects.
+	fs, err := Connect(SSHConfig{User: "test", Addr: addr, IdentityFile: clientKeyPath, KnownHosts: knownHosts})
+	if err != nil {
+		t.Fatalf("connect with reordered host key algos: %v", err)
+	}
+	defer fs.Close()
 }

@@ -183,7 +183,11 @@ func Connect(cfg SSHConfig) (*SftpFs, error) {
 		User:            cfg.User,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signers...)},
 		HostKeyCallback: hostKeyCb,
-		Timeout:         15 * time.Second,
+		// Prefer host key types already recorded in known_hosts — without
+		// this, servers offering several key types can present one with no
+		// entry and fail with "key mismatch" even though the host is known.
+		HostKeyAlgorithms: preferredHostKeyAlgos(cfg.Addr, cfg.KnownHosts),
+		Timeout:           15 * time.Second,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ssh %s: %w", cfg.Addr, err)
