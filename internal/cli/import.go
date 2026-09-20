@@ -136,8 +136,13 @@ func runImport(args []string, out, errW io.Writer) error {
 	}
 
 	// The imported state becomes a real snapshot: provenance belongs in
-	// the timeline.
+	// the timeline. The source may have delivered its own .vrsignore (a
+	// project's rules are content) — reload before saving so the adopted
+	// rules govern this snapshot too, not just later saves.
 	message := fmt.Sprintf("import from %s — %d file(s)", tgt.String(), len(plan.Files)+len(plan.Pruned))
+	if ig, err = ignore.Load(root); err != nil {
+		return err
+	}
 	res, err := snap.Capture(root, pol, cache, ig)
 	if err != nil {
 		return err

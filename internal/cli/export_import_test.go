@@ -231,3 +231,45 @@ func TestTransferProgress(t *testing.T) {
 		t.Errorf("progress leaked into export stdout: %q", out2.String())
 	}
 }
+
+// Importing a project adopts its ignore rules — and they govern the
+// import's own auto-save, not just later ones.
+func TestImportAdoptsIgnoreRules(t *testing.T) {
+	t.Chdir(t.TempDir())
+	src := filepath.Join("..", "rules-src")
+	if err := os.MkdirAll(filepath.Join(src, "vendor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".vrsignore"), []byte("vendor/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "vendor", "junk.txt"), []byte("junk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "index.html"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "import", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "imported") {
+		t.Fatalf("import: %s", out)
+	}
+	// The repo adopted the source's rules verbatim.
+	if b, _ := os.ReadFile(".vrsignore"); string(b) != "vendor/\n" {
+		t.Fatalf("adopted rules: %q", b)
+	}
+	// The import's own snapshot already respects them: vendor/ never
+	// enters history even though it was on disk.
+	if _, err := run(t, "export", filepath.Join("..", "rules-out"), "@1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join("..", "rules-out", "vendor", "junk.txt")); !os.IsNotExist(err) {
+		t.Fatal("ignored directory entered the import snapshot")
+	}
+	if _, err := os.Stat(filepath.Join("..", "rules-out", "index.html")); err != nil {
+		t.Fatal("content missing from import snapshot")
+	}
+}

@@ -307,6 +307,12 @@ If you want sync, use rsync — vrs is your undo button, not your sync engine.
   `.vrsignore` stays tracked in snapshots — ignore rules mean
   "not versioned", and unversioning config would put hand-written rules
   outside history.
+- v0.3.6: import reloads ignore rules before its auto-save, so a source
+  project's `.vrsignore` governs the import's own snapshot (previously
+  the adopted rules only applied to later saves — a source-excluded
+  directory could land in the import snapshot and drop out on the next
+  save). Found while answering why import downloads the file at all:
+  adopting a project means adopting its rules.
 - `[user@]host:/abs/path` — SSH/SFTP. `~/.ssh/config` aliases (Hostname,
   User, Port, IdentityFile) are honored; auth is agent + keys only
   (passwords unsupported in v1); host keys are checked against

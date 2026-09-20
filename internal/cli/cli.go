@@ -8,7 +8,7 @@ import (
 )
 
 // Version is the vrs build version.
-const Version = "0.3.5"
+const Version = "0.3.6"
 
 const usage = `vrs — snapshots for your code
 

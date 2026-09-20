@@ -161,7 +161,12 @@ previous state captured as #6 — `vrs goto @6` to recover
   ships**: a target directory is not a vrs repository. The export says
   so on stderr. (Nested `.vrsignore` files are per-directory user
   content and ship normally; a target's own `.vrsignore` is never
-  touched, not even by `--prune`.) `--prune` mirrors exactly
+  touched, not even by `--prune`.)
+- Import is the mirror image: a source project's root `.vrsignore` is
+  content too — importing a project adopts its rules (they govern the
+  import's own snapshot), so exclusions like `vendor/` don't land in
+  history. Ignore rules only ever apply to the file at the repository
+  root; nested same-name files have no meaning to vrs. `--prune` mirrors exactly
   (extras trashed, never deleted).
 - Imports overlay the source onto your tree (ignore-filtered, `.vrs/` never
   touched), then **snapshot automatically** — `import from …` lands in the
