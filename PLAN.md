@@ -288,6 +288,12 @@ If you want sync, use rsync — vrs is your undo button, not your sync engine.
   servers for key types with no recorded entry, failing verification with
   "key mismatch" on properly known hosts (common with modern servers
   offering ed25519 + ECDSA + RSA).
+- v0.3.3: client auth mirrors OpenSSH — all `IdentityFile` lines (not just
+  the first), `IdentitiesOnly`, agent-first with the agent's copy preferred
+  over prompting, and terminal passphrase prompts for encrypted keys the
+  agent doesn't hold (three attempts; non-TTY — MCP, scripts — never
+  prompts and points at `ssh-add` instead). Previously encrypted keys were
+  silently skipped, surfacing as "unable to authenticate" with no hint.
 - `[user@]host:/abs/path` — SSH/SFTP. `~/.ssh/config` aliases (Hostname,
   User, Port, IdentityFile) are honored; auth is agent + keys only
   (passwords unsupported in v1); host keys are checked against

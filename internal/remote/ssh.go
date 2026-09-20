@@ -2,11 +2,13 @@ package remote
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kevinburke/ssh_config"
@@ -14,14 +16,21 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
+	"golang.org/x/term"
 )
 
 // SSHConfig holds resolved connection parameters for an SSH target.
 type SSHConfig struct {
-	User         string
-	Addr         string // host:port
-	IdentityFile string // optional explicit key
-	KnownHosts   string // known_hosts file
+	User           string
+	Addr           string   // host:port
+	IdentityFiles  []string // explicit keys from ssh_config (may be empty)
+	KnownHosts     string   // known_hosts file
+	IdentitiesOnly bool     // offer only IdentityFiles (agent keys used just to supply those identities)
+
+	// PassphrasePrompt, when set, is asked for the passphrase of an
+	// encrypted identity file the agent doesn't already hold. Nil means
+	// encrypted keys are skipped (scripts, tests).
+	PassphrasePrompt func(path string) (string, error)
 }
 
 // defaultIdentityFiles are tried when no IdentityFile is configured.
@@ -50,7 +59,8 @@ func loadSSHConfig(path string) (*ssh_config.Config, error) {
 // resolution entirely (tests).
 func ResolveSSH(user, host string, port int, cfgPath, knownHostsPath string) (SSHConfig, error) {
 	cfgPort := 22
-	ident := ""
+	var idents []string
+	identitiesOnly := false
 
 	if cfgPath != "" {
 		if cfg, err := loadSSHConfig(cfgPath); err == nil {
@@ -66,11 +76,16 @@ func ResolveSSH(user, host string, port int, cfgPath, knownHostsPath string) (SS
 					cfgPort = p
 				}
 			}
-			if v, _ := cfg.Get(host, "identityfile"); v != "" {
-				v = expandTilde(v)
-				if _, err := os.Stat(v); err == nil {
-					ident = v
+			if vs, err := cfg.GetAll(host, "identityfile"); err == nil {
+				for _, v := range vs {
+					v = expandTilde(v)
+					if _, err := os.Stat(v); err == nil {
+						idents = append(idents, v)
+					}
 				}
+			}
+			if v, _ := cfg.Get(host, "identitiesonly"); strings.EqualFold(strings.TrimSpace(v), "yes") {
+				identitiesOnly = true
 			}
 			if v, _ := cfg.Get(host, "hostname"); v != "" {
 				host = v
@@ -89,10 +104,11 @@ func ResolveSSH(user, host string, port int, cfgPath, knownHostsPath string) (SS
 		knownHostsPath = p
 	}
 	return SSHConfig{
-		User:         user,
-		Addr:         net.JoinHostPort(host, strconv.Itoa(port)),
-		IdentityFile: ident,
-		KnownHosts:   knownHostsPath,
+		User:           user,
+		Addr:           net.JoinHostPort(host, strconv.Itoa(port)),
+		IdentityFiles:  idents,
+		KnownHosts:     knownHostsPath,
+		IdentitiesOnly: identitiesOnly,
 	}, nil
 }
 
@@ -106,7 +122,8 @@ func expandTilde(p string) string {
 }
 
 // Dial opens an SFTP filesystem for an SSH target, resolving the user's
-// ~/.ssh/config, keys and known_hosts.
+// ~/.ssh/config, keys and known_hosts. Encrypted keys the agent doesn't
+// hold prompt for a passphrase when run on a terminal.
 func Dial(t Target) (*SftpFs, error) {
 	return DialWith(t, "", "")
 }
@@ -128,7 +145,26 @@ func DialWith(t Target, cfgPath, knownHostsPath string) (*SftpFs, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.PassphrasePrompt == nil {
+		cfg.PassphrasePrompt = TerminalPassphrasePrompt
+	}
 	return Connect(cfg)
+}
+
+// TerminalPassphrasePrompt reads a key passphrase from the terminal with
+// echo disabled. It refuses when stdin is not a TTY (scripts, MCP) —
+// no silent hangs.
+func TerminalPassphrasePrompt(path string) (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("stdin is not a terminal — load the key with ssh-add instead")
+	}
+	fmt.Fprintf(os.Stderr, "Enter passphrase for %s: ", path)
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", err
+	}
+	return string(pw), nil
 }
 
 // Connect opens an SSH+SFTP session with explicit parameters (tests use
@@ -142,41 +178,19 @@ func Connect(cfg SSHConfig) (*SftpFs, error) {
 		return nil, fmt.Errorf("known_hosts: %w", err)
 	}
 
-	var signers []ssh.Signer
+	var agentSigners []ssh.Signer
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		if conn, err := net.Dial("unix", sock); err == nil {
 			ag := agent.NewClient(conn)
 			if s, err := ag.Signers(); err == nil {
-				signers = append(signers, s...)
+				agentSigners = s
 			}
 			conn.Close()
 		}
 	}
-	identityFiles := []string{cfg.IdentityFile}
-	if cfg.IdentityFile == "" {
-		for _, name := range defaultIdentityFiles {
-			p, err := homePath(".ssh", name)
-			if err != nil {
-				continue
-			}
-			identityFiles = append(identityFiles, p)
-		}
-	}
-	for _, p := range identityFiles {
-		if p == "" {
-			continue
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			continue // defaults may not exist; explicit config is resolved earlier
-		}
-		if s, err := ssh.ParsePrivateKey(b); err == nil {
-			signers = append(signers, s)
-		}
-		// Passphrase-protected keys are skipped: v1 does not prompt.
-	}
-	if len(signers) == 0 {
-		return nil, fmt.Errorf("no usable ssh credentials — add a key to the agent or ~/.ssh/id_ed25519 (password auth is not supported)")
+	signers, err := authSigners(cfg, agentSigners)
+	if err != nil {
+		return nil, err
 	}
 
 	conn, err := ssh.Dial("tcp", cfg.Addr, &ssh.ClientConfig{
@@ -198,4 +212,105 @@ func Connect(cfg SSHConfig) (*SftpFs, error) {
 		return nil, fmt.Errorf("sftp: %w", err)
 	}
 	return newSftpFsWithConn(sftpClient, conn), nil
+}
+
+// authSigners assembles the keys offered for client authentication,
+// mirroring OpenSSH semantics:
+//
+//   - agent keys are offered unless IdentitiesOnly is set;
+//   - identity files are parsed (multiple IdentityFile lines supported);
+//     for each, the agent's copy of the same key is preferred when present,
+//     otherwise the file is decrypted, prompting up to three times;
+//   - keys are deduplicated by public key.
+//
+// Encrypted keys that can't be obtained are collected so the caller can
+// explain exactly what's missing.
+func authSigners(cfg SSHConfig, agentSigners []ssh.Signer) ([]ssh.Signer, error) {
+	var signers []ssh.Signer
+	have := map[string]bool{}
+	add := func(s ssh.Signer) {
+		if k := string(s.PublicKey().Marshal()); !have[k] {
+			have[k] = true
+			signers = append(signers, s)
+		}
+	}
+
+	agentByKey := map[string]ssh.Signer{}
+	for _, s := range agentSigners {
+		agentByKey[string(s.PublicKey().Marshal())] = s
+	}
+	if !cfg.IdentitiesOnly {
+		for _, s := range agentSigners {
+			add(s)
+		}
+	}
+
+	identityFiles := cfg.IdentityFiles
+	if len(identityFiles) == 0 {
+		for _, name := range defaultIdentityFiles {
+			if p, err := homePath(".ssh", name); err == nil {
+				identityFiles = append(identityFiles, p)
+			}
+		}
+	}
+
+	var skipped []string
+	for _, p := range identityFiles {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue // defaults may not exist; explicit config is resolved earlier
+		}
+		s, err := ssh.ParsePrivateKey(b)
+		if err == nil {
+			add(s)
+			continue
+		}
+		var missing *ssh.PassphraseMissingError
+		if !errors.As(err, &missing) {
+			continue
+		}
+		// Encrypted: prefer the agent's copy of the same key (no prompt),
+		// like OpenSSH with an agent holding the identity.
+		if missing.PublicKey != nil {
+			if as, ok := agentByKey[string(missing.PublicKey.Marshal())]; ok {
+				add(as)
+				continue
+			}
+		}
+		if cfg.PassphrasePrompt == nil {
+			skipped = append(skipped, p)
+			continue
+		}
+		if s, err = decryptIdentity(p, b, cfg.PassphrasePrompt); err == nil {
+			add(s)
+		} else {
+			skipped = append(skipped, p)
+		}
+	}
+
+	if len(signers) == 0 {
+		if len(skipped) > 0 {
+			return nil, fmt.Errorf("no usable ssh credentials — could not use encrypted key(s) %s; load with `ssh-add` or enter the passphrase", strings.Join(skipped, ", "))
+		}
+		return nil, fmt.Errorf("no usable ssh credentials — add a key to the agent or ~/.ssh/id_ed25519 (password auth is not supported)")
+	}
+	return signers, nil
+}
+
+// decryptIdentity asks for the passphrase up to three times (a wrong one
+// is a typo, not a decision).
+func decryptIdentity(path string, b []byte, prompt func(string) (string, error)) (ssh.Signer, error) {
+	var err error
+	for try := 0; try < 3; try++ {
+		pw, perr := prompt(path)
+		if perr != nil {
+			return nil, perr
+		}
+		var s ssh.Signer
+		s, err = ssh.ParsePrivateKeyWithPassphrase(b, []byte(pw))
+		if err == nil {
+			return s, nil
+		}
+	}
+	return nil, err
 }

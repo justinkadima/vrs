@@ -146,8 +146,12 @@ previous state captured as #6 — `vrs goto @6` to recover
 - vrs prefers the host key *types* already recorded in your `known_hosts` —
   like OpenSSH — so a server offering several key types verifies against the
   key you've already trusted. (First contact still happens through `ssh`
-  itself, which writes the entry.) Passphrase-protected keys need
-  `ssh-add` (the agent); vrs never prompts.
+  itself, which writes the entry.)
+- Auth mirrors `ssh`: the agent plus every `IdentityFile` from your config
+  (multiple lines and `IdentitiesOnly` honored), and encrypted keys prompt
+  for a passphrase on the terminal. Under `vrs mcp` or scripts there is no
+  prompt — load the key with `ssh-add` instead. Password auth is not
+  supported.
 - Exports are **incremental** via a manifest at the target and always ship
   *recorded* state — never uncommitted work. `--prune` mirrors exactly
   (extras trashed, never deleted).

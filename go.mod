@@ -3,23 +3,24 @@ module github.com/justinkadima/vrs
 go 1.26.2
 
 require (
+	github.com/kevinburke/ssh_config v1.6.0
 	github.com/klauspost/compress v1.20.0
+	github.com/pkg/sftp v1.13.9
 	github.com/restic/chunker v0.5.0
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
+	github.com/sergi/go-diff v1.4.0
+	golang.org/x/crypto v0.36.0
+	golang.org/x/term v0.30.0
 	modernc.org/sqlite v1.59.0
 )
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/pkg/sftp v1.13.11 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/sergi/go-diff v1.4.0 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

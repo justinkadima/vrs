@@ -157,7 +157,7 @@ func TestSSHConnectAndExport(t *testing.T) {
 	addr, knownHosts, keyPath := startSSHServer(t)
 	remoteRoot := filepath.ToSlash(t.TempDir())
 
-	fs, err := Connect(SSHConfig{User: "test", Addr: addr, IdentityFile: keyPath, KnownHosts: knownHosts})
+	fs, err := Connect(SSHConfig{User: "test", Addr: addr, IdentityFiles: []string{keyPath}, KnownHosts: knownHosts})
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -209,18 +209,18 @@ func TestSSHConnectRejects(t *testing.T) {
 	addr, knownHosts, keyPath := startSSHServer(t)
 
 	// Unknown host key (empty known_hosts) is refused — never auto-accept.
-	_, err := Connect(SSHConfig{User: "test", Addr: addr, IdentityFile: keyPath, KnownHosts: filepath.Join(t.TempDir(), "empty")})
+	_, err := Connect(SSHConfig{User: "test", Addr: addr, IdentityFiles: []string{keyPath}, KnownHosts: filepath.Join(t.TempDir(), "empty")})
 	if err == nil || !strings.Contains(err.Error(), "known") {
 		t.Fatalf("want known_hosts failure, got %v", err)
 	}
 
 	// No user → refuse before dialing.
-	if _, err := Connect(SSHConfig{Addr: addr, IdentityFile: keyPath, KnownHosts: knownHosts}); err == nil {
+	if _, err := Connect(SSHConfig{Addr: addr, IdentityFiles: []string{keyPath}, KnownHosts: knownHosts}); err == nil {
 		t.Fatal("want missing-user error")
 	}
 
 	// No credentials → refuse before dialing.
-	if _, err := Connect(SSHConfig{User: "test", Addr: addr, KnownHosts: knownHosts, IdentityFile: filepath.Join(t.TempDir(), "missing")}); err == nil {
+	if _, err := Connect(SSHConfig{User: "test", Addr: addr, KnownHosts: knownHosts, IdentityFiles: []string{filepath.Join(t.TempDir(), "missing")}}); err == nil {
 		t.Fatal("want no-credentials error")
 	}
 }
@@ -241,7 +241,7 @@ func TestResolveSSHAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.User != "web" || got.Addr != "127.0.0.1:2222" || got.IdentityFile != keyPath || got.KnownHosts != "/tmp/kh" {
+	if got.User != "web" || got.Addr != "127.0.0.1:2222" || got.IdentityFiles[0] != keyPath || got.KnownHosts != "/tmp/kh" {
 		t.Fatalf("alias resolution: %+v", got)
 	}
 
@@ -259,7 +259,7 @@ func TestResolveSSHAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.User != "root" || got.Addr != "nosuchalias:22" || got.IdentityFile != "" {
+	if got.User != "root" || got.Addr != "nosuchalias:22" || len(got.IdentityFiles) != 0 {
 		t.Fatalf("defaults: %+v", got)
 	}
 }
@@ -349,7 +349,7 @@ func TestHostKeyAlgoPreference(t *testing.T) {
 	}
 
 	// vrs's Connect reorders by known_hosts and connects.
-	fs, err := Connect(SSHConfig{User: "test", Addr: addr, IdentityFile: clientKeyPath, KnownHosts: knownHosts})
+	fs, err := Connect(SSHConfig{User: "test", Addr: addr, IdentityFiles: []string{clientKeyPath}, KnownHosts: knownHosts})
 	if err != nil {
 		t.Fatalf("connect with reordered host key algos: %v", err)
 	}
