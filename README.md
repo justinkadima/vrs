@@ -157,10 +157,11 @@ previous state captured as #6 — `vrs goto @6` to recover
 - Transfers report progress on stderr: a scan heartbeat, then
   `[12/142] path · 1.4 MiB` per file, so a stuck connection is visible
   instead of silent. Summaries stay on stdout.
-- `.vrsignore` is a tracked file like any other, so it ships with exports
-  — vrs never silently filters the recorded tree. Don't want it on
-  targets? `rm .vrsignore && vrs save` — the built-in ignore rules live
-  in the binary, and only your *custom* patterns need the file. `--prune` mirrors exactly
+- `.vrsignore` is tracked and versioned in the repository, but **never
+  ships**: a target directory is not a vrs repository. The export says
+  so on stderr. (Nested `.vrsignore` files are per-directory user
+  content and ship normally; a target's own `.vrsignore` is never
+  touched, not even by `--prune`.) `--prune` mirrors exactly
   (extras trashed, never deleted).
 - Imports overlay the source onto your tree (ignore-filtered, `.vrs/` never
   touched), then **snapshot automatically** — `import from …` lands in the

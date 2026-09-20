@@ -286,3 +286,42 @@ func TestProgressCallbacks(t *testing.T) {
 		t.Fatalf("apply progress: %+v", calls)
 	}
 }
+
+// Repo config never ships; nested same-name files are user content and do.
+// A target's own .vrsignore (e.g. left by an older vrs) is never touched,
+// including by --prune.
+func TestRepoConfigNotShipped(t *testing.T) {
+	files := map[string]string{".vrsignore": "rules", "sub/.vrsignore": "nested", "a.txt": "one"}
+	src := fakeSource{}
+	for _, c := range files {
+		src[hashOf(c)] = []byte(c)
+	}
+	dstRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dstRoot, ".vrsignore"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := ExportTree(entriesOf(files), src, NewLocalFs(), dstRoot, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Written) != 2 || res.Skipped != 0 {
+		t.Fatalf("written: %+v", res)
+	}
+	if readLocal(t, dstRoot, "sub/.vrsignore") != "nested" {
+		t.Fatal("nested .vrsignore should ship (user content)")
+	}
+	if readLocal(t, dstRoot, ".vrsignore") != "stale" {
+		t.Fatal("target's own .vrsignore must be untouched")
+	}
+
+	res, err = ExportTree(entriesOf(files), src, NewLocalFs(), dstRoot, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range res.Pruned {
+		if p == ".vrsignore" {
+			t.Fatalf("prune touched the target's .vrsignore: %+v", res.Pruned)
+		}
+	}
+}

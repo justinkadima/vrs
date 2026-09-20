@@ -299,6 +299,14 @@ If you want sync, use rsync — vrs is your undo button, not your sync engine.
   fetch so a hung transfer names the file it's stuck on). Progress
   callbacks in remote (nil-safe); summaries stay on stdout. Motivated by
   a user mistaking a working SFTP import for a hang.
+- v0.3.5: exports never ship the repository's `.vrsignore` — a target is
+  not a vrs repository, and the file was auto-created at init (users never
+  chose to track it). Root-only: nested same-name files are user content.
+  The skip is announced on stderr, not silent; targets' own copies (e.g.
+  from older vrs exports) are never touched, including by `--prune`.
+  `.vrsignore` stays tracked in snapshots — ignore rules mean
+  "not versioned", and unversioning config would put hand-written rules
+  outside history.
 - `[user@]host:/abs/path` — SSH/SFTP. `~/.ssh/config` aliases (Hostname,
   User, Port, IdentityFile) are honored; auth is agent + keys only
   (passwords unsupported in v1); host keys are checked against

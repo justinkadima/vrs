@@ -20,16 +20,23 @@ func TestExportLocal(t *testing.T) {
 	}
 	outDir := filepath.Join("..", "export-out")
 
-	// Full export of the position (#2): 2 files (a.txt + .vrsignore).
+	// Full export of the position (#2): 1 file ships — a.txt. The snapshot
+	// has 2 entries, but .vrsignore is repo config and never ships.
 	out, err := run(t, "export", outDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "exported #2 to") || !strings.Contains(out, "2 file(s) written") {
+	if !strings.Contains(out, "exported #2 to") || !strings.Contains(out, "1 file(s) written") {
 		t.Fatalf("export: %s", out)
+	}
+	if !strings.Contains(out, "not shipped") {
+		t.Fatalf("export should say .vrsignore is not shipped: %s", out)
 	}
 	if b, _ := os.ReadFile(filepath.Join(outDir, "a.txt")); string(b) != "two\n" {
 		t.Fatalf("exported content: %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, ".vrsignore")); !os.IsNotExist(err) {
+		t.Fatal(".vrsignore shipped to target")
 	}
 	if _, err := os.Stat(filepath.Join(outDir, ".vrs-manifest.json")); err != nil {
 		t.Fatalf("manifest missing: %v", err)
@@ -40,7 +47,7 @@ func TestExportLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "0 file(s) written") || !strings.Contains(out, "2 unchanged") {
+	if !strings.Contains(out, "0 file(s) written") || !strings.Contains(out, "1 unchanged") {
 		t.Fatalf("re-export: %s", out)
 	}
 
@@ -217,7 +224,7 @@ func TestTransferProgress(t *testing.T) {
 	if err := Run([]string{"export", filepath.Join("..", "progress-dst")}, &out2, &errB2); err != nil {
 		t.Fatal(err)
 	}
-	if s := errB2.String(); !strings.Contains(s, "exporting #1 to") || !strings.Contains(s, "[3/3] index.html · 7 B") {
+	if s := errB2.String(); !strings.Contains(s, "exporting #1 to") || !strings.Contains(s, "[2/2] index.html · 7 B") || !strings.Contains(s, "not shipped") {
 		t.Errorf("export stderr:\n%s", s)
 	}
 	if strings.Contains(out2.String(), "[1/3]") {

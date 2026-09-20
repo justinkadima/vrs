@@ -79,7 +79,12 @@ func runExport(args []string, out, errW io.Writer) error {
 		dst, dstRoot = sfs, tgt.Path
 	}
 
-	fmt.Fprintf(errW, "exporting #%d to %s — %d file(s) in snapshot\n", targetID, tgt.String(), len(entries))
+	shipCount := len(entries)
+	if _, ok := entries[remote.RepoConfigName]; ok {
+		shipCount--
+		fmt.Fprintln(errW, "  .vrsignore is repo config — not shipped (targets are not vrs repositories)")
+	}
+	fmt.Fprintf(errW, "exporting #%d to %s — %d file(s) in snapshot\n", targetID, tgt.String(), shipCount)
 	res, err := remote.ExportTree(entries, rc.st, dst, dstRoot, *prune, fileProgress(errW))
 	if err != nil {
 		return err

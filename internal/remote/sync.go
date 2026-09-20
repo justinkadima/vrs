@@ -21,6 +21,12 @@ type manifestEntry struct {
 	Mode uint32 `json:"mode"`
 }
 
+// RepoConfigName is the repository's own config file. It is tracked and
+// versioned like any other file, but never shipped: a target directory
+// is not a vrs repository. Nested files of the same name are user
+// content (per-directory scoping, like gitignore) and do ship.
+const RepoConfigName = ".vrsignore"
+
 // Reserved reports whether a snapshot entry path collides with the names vrs
 // owns at a target.
 func Reserved(p string) bool {
@@ -85,6 +91,9 @@ func ExportTree(entries map[string]snap.Entry, src snap.ContentSource, dst Fs, r
 	res := &ExportResult{}
 	paths := make([]string, 0, len(entries))
 	for p := range entries {
+		if p == RepoConfigName {
+			continue // repo config: versioned, but targets are not vrs repos
+		}
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
@@ -294,7 +303,7 @@ func walkFiles(fs Fs, root string) ([]string, error) {
 			if rel != "" {
 				child = rel + "/" + name
 			}
-			if name == ManifestName || name == TrashDirName {
+			if name == ManifestName || name == TrashDirName || (rel == "" && name == RepoConfigName) {
 				continue
 			}
 			if fi.IsDir {
