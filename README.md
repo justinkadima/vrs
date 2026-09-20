@@ -156,7 +156,11 @@ previous state captured as #6 — `vrs goto @6` to recover
   *recorded* state — never uncommitted work.
 - Transfers report progress on stderr: a scan heartbeat, then
   `[12/142] path · 1.4 MiB` per file, so a stuck connection is visible
-  instead of silent. Summaries stay on stdout. `--prune` mirrors exactly
+  instead of silent. Summaries stay on stdout.
+- `.vrsignore` is a tracked file like any other, so it ships with exports
+  — vrs never silently filters the recorded tree. Don't want it on
+  targets? `rm .vrsignore && vrs save` — the built-in ignore rules live
+  in the binary, and only your *custom* patterns need the file. `--prune` mirrors exactly
   (extras trashed, never deleted).
 - Imports overlay the source onto your tree (ignore-filtered, `.vrs/` never
   touched), then **snapshot automatically** — `import from …` lands in the
