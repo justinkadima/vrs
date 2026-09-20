@@ -52,6 +52,14 @@ func saveManifest(fs Fs, root string, m manifest) error {
 	return fs.WriteFile(posixJoin(root, ManifestName), b, 0o644)
 }
 
+// ScanProgress is called as a source walk considers each file: scanned
+// counts files seen so far. Calls are cheap — callers throttle.
+type ScanProgress func(scanned int, path string)
+
+// FileProgress reports a file being transferred: done is 1-based, total
+// is the number of files in the pass (0 if unknown), size in bytes.
+type FileProgress func(done, total int, path string, size int64)
+
 // ExportResult reports what an export did.
 type ExportResult struct {
 	Snapshot int64
@@ -65,7 +73,7 @@ type ExportResult struct {
 // src provides file content by hash (the vrs store). Incremental via the
 // target manifest; the manifest is rewritten only after everything
 // succeeded, so an interrupted export leaves the target consistent.
-func ExportTree(entries map[string]snap.Entry, src snap.ContentSource, dst Fs, root string, prune bool) (*ExportResult, error) {
+func ExportTree(entries map[string]snap.Entry, src snap.ContentSource, dst Fs, root string, prune bool, prog FileProgress) (*ExportResult, error) {
 	old, err := loadManifest(dst, root)
 	if err != nil {
 		return nil, err
@@ -81,7 +89,7 @@ func ExportTree(entries map[string]snap.Entry, src snap.ContentSource, dst Fs, r
 	}
 	sort.Strings(paths)
 
-	for _, p := range paths {
+	for i, p := range paths {
 		e := entries[p]
 		if m, ok := old.Files[p]; ok && m.Hash == e.Hash && m.Size == e.Size {
 			if m.Mode == e.Mode {
@@ -98,6 +106,9 @@ func ExportTree(entries map[string]snap.Entry, src snap.ContentSource, dst Fs, r
 		data, err := src.ReadVersion(e.Hash)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", p, err)
+		}
+		if prog != nil {
+			prog(i+1, len(paths), p, e.Size)
 		}
 		if err := dst.WriteFile(posixJoin(root, p), data, e.Mode); err != nil {
 			return nil, fmt.Errorf("write %s: %w", p, err)
@@ -164,7 +175,7 @@ func quickMatch(local, remote FileInfo) bool {
 // PlanImport walks the source tree and computes what an import would do,
 // without touching anything. ign is the repository's ignore rules; they
 // filter the download set exactly as a save would.
-func PlanImport(src Fs, srcRoot string, dst Fs, dstRoot string, ign snap.Ignore, prune bool) (*ImportPlan, error) {
+func PlanImport(src Fs, srcRoot string, dst Fs, dstRoot string, ign snap.Ignore, prune bool, scan ScanProgress) (*ImportPlan, error) {
 	plan := &ImportPlan{present: map[string]bool{}}
 
 	var walk func(rel string) error
@@ -199,6 +210,9 @@ func PlanImport(src Fs, srcRoot string, dst Fs, dstRoot string, ign snap.Ignore,
 				continue
 			}
 			plan.present[child] = true
+			if scan != nil {
+				scan(len(plan.present), child)
+			}
 
 			local, err := dst.Stat(posixJoin(dstRoot, child))
 			switch {
@@ -234,8 +248,11 @@ func PlanImport(src Fs, srcRoot string, dst Fs, dstRoot string, ign snap.Ignore,
 
 // ApplyImport performs a plan: download files (preserving mtimes, so
 // repeats are incremental), then move pruned files to trashBase.
-func ApplyImport(plan *ImportPlan, src Fs, srcRoot string, dst Fs, dstRoot, trashBase string) error {
-	for _, pl := range plan.Files {
+func ApplyImport(plan *ImportPlan, src Fs, srcRoot string, dst Fs, dstRoot, trashBase string, prog FileProgress) error {
+	for i, pl := range plan.Files {
+		if prog != nil {
+			prog(i+1, len(plan.Files), pl.Rel, pl.Size)
+		}
 		data, err := src.ReadFile(posixJoin(srcRoot, pl.Rel))
 		if err != nil {
 			return fmt.Errorf("read %s: %w", pl.Rel, err)

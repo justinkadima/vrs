@@ -169,7 +169,7 @@ func TestSSHConnectAndExport(t *testing.T) {
 	for _, c := range files {
 		src[hashOf(c)] = []byte(c)
 	}
-	res, err := ExportTree(entriesOf(files), src, fs, remoteRoot, false)
+	res, err := ExportTree(entriesOf(files), src, fs, remoteRoot, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestSSHConnectAndExport(t *testing.T) {
 	}
 
 	// Incremental: the manifest survives the round trip.
-	res, err = ExportTree(entriesOf(files), src, fs, remoteRoot, false)
+	res, err = ExportTree(entriesOf(files), src, fs, remoteRoot, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,14 +190,14 @@ func TestSSHConnectAndExport(t *testing.T) {
 	// nothing — different machines would compare stats; here mtime was never
 	// set on export, but content still round-trips).
 	dstRoot := t.TempDir()
-	plan, err := PlanImport(fs, remoteRoot, NewLocalFs(), dstRoot, &staticIgnore{}, false)
+	plan, err := PlanImport(fs, remoteRoot, NewLocalFs(), dstRoot, &staticIgnore{}, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(plan.Files) != 2 {
 		t.Fatalf("ssh import plan: %+v", plan.Files)
 	}
-	if err := ApplyImport(plan, fs, remoteRoot, NewLocalFs(), dstRoot, filepath.Join(dstRoot, "trash")); err != nil {
+	if err := ApplyImport(plan, fs, remoteRoot, NewLocalFs(), dstRoot, filepath.Join(dstRoot, "trash"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if readLocal(t, dstRoot, "assets/app.js") != "console.log(1)" {
@@ -292,7 +292,7 @@ func TestURITargetExport(t *testing.T) {
 	for _, c := range files {
 		src[hashOf(c)] = []byte(c)
 	}
-	res, err := ExportTree(entriesOf(files), src, fs, filepath.ToSlash(t.TempDir()), false)
+	res, err := ExportTree(entriesOf(files), src, fs, filepath.ToSlash(t.TempDir()), false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

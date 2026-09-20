@@ -60,7 +60,7 @@ func TestExportTreeLocal(t *testing.T) {
 		src[hashOf(c)] = []byte(c)
 	}
 
-	res, err := ExportTree(entriesOf(files), src, NewLocalFs(), dst, false)
+	res, err := ExportTree(entriesOf(files), src, NewLocalFs(), dst, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestExportTreeLocal(t *testing.T) {
 	}
 
 	// Idempotent: everything now matches the manifest.
-	res, err = ExportTree(entriesOf(files), src, NewLocalFs(), dst, false)
+	res, err = ExportTree(entriesOf(files), src, NewLocalFs(), dst, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestExportTreeLocal(t *testing.T) {
 	e2 := files2["a.txt"]
 	e2.Mode = 0o600
 	files2["a.txt"] = e2
-	res, err = ExportTree(files2, src, NewLocalFs(), dst, false)
+	res, err = ExportTree(files2, src, NewLocalFs(), dst, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestExportTreeLocal(t *testing.T) {
 
 	// --prune moves target extras to the target trash.
 	writeLocal(t, dst, "extra.txt", "extra", 0o644)
-	res, err = ExportTree(entriesOf(files), src, NewLocalFs(), dst, true)
+	res, err = ExportTree(entriesOf(files), src, NewLocalFs(), dst, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestImportPlanApplyLocal(t *testing.T) {
 
 	ig := &staticIgnore{ignored: map[string]bool{"node_modules/": true, ".env": true}}
 
-	plan, err := PlanImport(NewLocalFs(), srcRoot, NewLocalFs(), dstRoot, ig, false)
+	plan, err := PlanImport(NewLocalFs(), srcRoot, NewLocalFs(), dstRoot, ig, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestImportPlanApplyLocal(t *testing.T) {
 		}
 	}
 
-	if err := ApplyImport(plan, NewLocalFs(), srcRoot, NewLocalFs(), dstRoot, filepath.Join(t.TempDir(), "trash")); err != nil {
+	if err := ApplyImport(plan, NewLocalFs(), srcRoot, NewLocalFs(), dstRoot, filepath.Join(t.TempDir(), "trash"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if readLocal(t, dstRoot, "index.html") != "<html/>" {
@@ -168,7 +168,7 @@ func TestImportPlanApplyLocal(t *testing.T) {
 	}
 
 	// Quick-check: a re-plan with no source changes downloads nothing.
-	plan, err = PlanImport(NewLocalFs(), srcRoot, NewLocalFs(), dstRoot, ig, false)
+	plan, err = PlanImport(NewLocalFs(), srcRoot, NewLocalFs(), dstRoot, ig, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestImportPlanApplyLocal(t *testing.T) {
 	// local-only tracked file.
 	writeLocal(t, dstRoot, "keep.txt", "keep", 0o644)
 	writeLocal(t, srcRoot, "index.html", "<html>changed</html>", 0o644)
-	plan, err = PlanImport(NewLocalFs(), srcRoot, NewLocalFs(), dstRoot, ig, true)
+	plan, err = PlanImport(NewLocalFs(), srcRoot, NewLocalFs(), dstRoot, ig, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestImportPlanApplyLocal(t *testing.T) {
 	}
 
 	trashBase := filepath.Join(dstRoot, ".vrs", "trash", "1")
-	if err := ApplyImport(plan, NewLocalFs(), srcRoot, NewLocalFs(), dstRoot, trashBase); err != nil {
+	if err := ApplyImport(plan, NewLocalFs(), srcRoot, NewLocalFs(), dstRoot, trashBase, nil); err != nil {
 		t.Fatal(err)
 	}
 	if readLocal(t, dstRoot, "index.html") != "<html>changed</html>" {
@@ -225,5 +225,64 @@ func TestLoadManifestCorrupt(t *testing.T) {
 	m, err := loadManifest(NewLocalFs(), dst)
 	if err != nil || len(m.Files) != 0 {
 		t.Fatalf("corrupt manifest: %+v %v", m, err)
+	}
+}
+
+func TestProgressCallbacks(t *testing.T) {
+	dstRoot := t.TempDir()
+
+	files := map[string]string{"a.txt": "one", "b/c.txt": "two", "d.txt": "three"}
+	src := fakeSource{}
+	for _, c := range files {
+		src[hashOf(c)] = []byte(c)
+	}
+
+	type pcall struct {
+		done, total int
+		path        string
+		size        int64
+	}
+	var calls []pcall
+	rec := func(done, total int, path string, size int64) {
+		calls = append(calls, pcall{done, total, path, size})
+	}
+
+	if _, err := ExportTree(entriesOf(files), src, NewLocalFs(), dstRoot, false, rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 3 || calls[0].done != 1 || calls[0].total != 3 || calls[2].done != 3 {
+		t.Fatalf("export progress: %+v", calls)
+	}
+	if calls[0].size != int64(len("one")) {
+		t.Fatalf("export progress size: %+v", calls[0])
+	}
+
+	// Idempotent re-export: nothing transferred, no calls.
+	calls = nil
+	if _, err := ExportTree(entriesOf(files), src, NewLocalFs(), dstRoot, false, rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("re-export should not report transfers: %+v", calls)
+	}
+
+	// Import scan: one call per candidate file, in walk order.
+	var scans []string
+	scanRec := func(n int, path string) { scans = append(scans, fmt.Sprintf("%d %s", n, path)) }
+	plan, err := PlanImport(NewLocalFs(), filepath.ToSlash(dstRoot), NewLocalFs(), t.TempDir(), &staticIgnore{}, false, scanRec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != len(plan.Files) {
+		t.Fatalf("scan calls %d, plan files %d", len(scans), len(plan.Files))
+	}
+
+	// Apply: done goes 1..N with the total.
+	calls = nil
+	if err := ApplyImport(plan, NewLocalFs(), filepath.ToSlash(dstRoot), NewLocalFs(), t.TempDir(), filepath.Join(t.TempDir(), "trash"), rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != len(plan.Files) || calls[0].done != 1 || calls[len(calls)-1].done != len(plan.Files) || calls[0].total != len(plan.Files) {
+		t.Fatalf("apply progress: %+v", calls)
 	}
 }

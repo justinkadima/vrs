@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,5 +175,52 @@ func TestImportLocal(t *testing.T) {
 	// Import takes no @ref.
 	if _, err := run(t, "import", src, "@2"); err == nil || !strings.Contains(err.Error(), "no @ref") {
 		t.Fatalf("import @ref: %v", err)
+	}
+}
+
+// Progress goes to stderr: stdout keeps the summary line, stderr carries
+// the scanning heartbeat and per-file transfer lines.
+func TestTransferProgress(t *testing.T) {
+	t.Chdir(t.TempDir())
+	srcDir := filepath.Join("..", "progress-src")
+	if err := os.MkdirAll(filepath.Join(srcDir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "index.html"), []byte("<html/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "assets", "app.js"), []byte("console.log(1)"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errB bytes.Buffer
+	if err := Run([]string{"import", srcDir}, &out, &errB); err != nil {
+		t.Fatal(err)
+	}
+	stderr := errB.String()
+	for _, want := range []string{
+		"scanning " + srcDir,
+		"transferring 2 file(s) from " + srcDir,
+		"  [1/2] assets/app.js · 14 B",
+		"  [2/2] index.html · 7 B",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("import stderr missing %q:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(out.String(), "[1/2]") {
+		t.Errorf("progress leaked into stdout: %q", out.String())
+	}
+
+	// Fresh export target: per-file lines for every written file.
+	var out2, errB2 bytes.Buffer
+	if err := Run([]string{"export", filepath.Join("..", "progress-dst")}, &out2, &errB2); err != nil {
+		t.Fatal(err)
+	}
+	if s := errB2.String(); !strings.Contains(s, "exporting #1 to") || !strings.Contains(s, "[3/3] index.html · 7 B") {
+		t.Errorf("export stderr:\n%s", s)
+	}
+	if strings.Contains(out2.String(), "[1/3]") {
+		t.Errorf("progress leaked into export stdout: %q", out2.String())
 	}
 }

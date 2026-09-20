@@ -294,6 +294,11 @@ If you want sync, use rsync — vrs is your undo button, not your sync engine.
   agent doesn't hold (three attempts; non-TTY — MCP, scripts — never
   prompts and points at `ssh-add` instead). Previously encrypted keys were
   silently skipped, surfacing as "unable to authenticate" with no hint.
+- v0.3.4: transfer progress on stderr (scan heartbeat every 50 files, then
+  `[done/total] path · size` per transferred file, printed before the
+  fetch so a hung transfer names the file it's stuck on). Progress
+  callbacks in remote (nil-safe); summaries stay on stdout. Motivated by
+  a user mistaking a working SFTP import for a hang.
 - `[user@]host:/abs/path` — SSH/SFTP. `~/.ssh/config` aliases (Hostname,
   User, Port, IdentityFile) are honored; auth is agent + keys only
   (passwords unsupported in v1); host keys are checked against

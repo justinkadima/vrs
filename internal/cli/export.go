@@ -79,7 +79,8 @@ func runExport(args []string, out, errW io.Writer) error {
 		dst, dstRoot = sfs, tgt.Path
 	}
 
-	res, err := remote.ExportTree(entries, rc.st, dst, dstRoot, *prune)
+	fmt.Fprintf(errW, "exporting #%d to %s — %d file(s) in snapshot\n", targetID, tgt.String(), len(entries))
+	res, err := remote.ExportTree(entries, rc.st, dst, dstRoot, *prune, fileProgress(errW))
 	if err != nil {
 		return err
 	}

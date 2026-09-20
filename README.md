@@ -153,7 +153,10 @@ previous state captured as #6 — `vrs goto @6` to recover
   prompt — load the key with `ssh-add` instead. Password auth is not
   supported.
 - Exports are **incremental** via a manifest at the target and always ship
-  *recorded* state — never uncommitted work. `--prune` mirrors exactly
+  *recorded* state — never uncommitted work.
+- Transfers report progress on stderr: a scan heartbeat, then
+  `[12/142] path · 1.4 MiB` per file, so a stuck connection is visible
+  instead of silent. Summaries stay on stdout. `--prune` mirrors exactly
   (extras trashed, never deleted).
 - Imports overlay the source onto your tree (ignore-filtered, `.vrs/` never
   touched), then **snapshot automatically** — `import from …` lands in the

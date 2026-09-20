@@ -99,7 +99,8 @@ func runImport(args []string, out, errW io.Writer) error {
 	}
 	local := remote.NewLocalFs()
 
-	plan, err := remote.PlanImport(src, srcRoot, local, root, ig, *prune)
+	fmt.Fprintf(errW, "scanning %s ...\n", tgt.String())
+	plan, err := remote.PlanImport(src, srcRoot, local, root, ig, *prune, scanProgress(errW))
 	if err != nil {
 		return fmt.Errorf("walk %s: %w", tgt.String(), err)
 	}
@@ -126,8 +127,11 @@ func runImport(args []string, out, errW io.Writer) error {
 		}
 	}
 
+	if len(plan.Files) > 0 {
+		fmt.Fprintf(errW, "transferring %d file(s) from %s\n", len(plan.Files), tgt.String())
+	}
 	trashBase := filepath.Join(root, ".vrs", "trash", fmt.Sprintf("%d", time.Now().UnixNano()))
-	if err := remote.ApplyImport(plan, src, srcRoot, local, root, trashBase); err != nil {
+	if err := remote.ApplyImport(plan, src, srcRoot, local, root, trashBase, fileProgress(errW)); err != nil {
 		return err
 	}
 
